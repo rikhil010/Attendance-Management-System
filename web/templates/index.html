@@ -1,0 +1,841 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance System Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f6f8fa;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+        }
+        .sidebar {
+            background-color: #ffffff;
+            border-right: 1px solid #d1d9e0;
+            min-height: 100vh;
+        }
+        .main-content {
+            background-color: #ffffff;
+            padding: 20px;
+        }
+        .btn-primary {
+            background-color: #0366d6;
+            border-color: #0366d6;
+        }
+        .btn-primary:hover {
+            background-color: #0256cc;
+            border-color: #0256cc;
+        }
+        .btn-success {
+            background-color: #28a745;
+            border-color: #28a745;
+        }
+        .btn-success:hover {
+            background-color: #218838;
+            border-color: #218838;
+        }
+        .btn-danger {
+            background-color: #dc3545;
+            border-color: #dc3545;
+        }
+        .btn-danger:hover {
+            background-color: #c82333;
+            border-color: #c82333;
+        }
+        .list-group-item {
+            border: none;
+            border-bottom: 1px solid #d1d9e0;
+        }
+        .list-group-item:hover {
+            background-color: #f6f8fa;
+        }
+        .card {
+            border: 1px solid #d1d9e0;
+            border-radius: 6px;
+        }
+        .form-control {
+            border-radius: 6px;
+        }
+        .modal-content {
+            border-radius: 6px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-3 sidebar p-3">
+                <h4 class="mb-4">Classes</h4>
+                <div class="card p-2 mb-3">
+                    <label class="form-label mb-1" for="esp32Ip">ESP32 IP</label>
+                    <input type="text" class="form-control form-control-sm mb-2" id="esp32Ip" placeholder="192.168.x.x">
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-outline-primary btn-sm" id="saveNetwork">Save Network</button>
+                        <button class="btn btn-outline-success btn-sm" id="detectNetwork">Detect ESP32</button>
+                    </div>
+                </div>
+                <button class="btn btn-primary btn-sm mb-3" data-bs-toggle="modal" data-bs-target="#addClassModal">Add Class</button>
+                <ul class="list-group" id="classList">
+                    <!-- Classes will be loaded here -->
+                </ul>
+            </div>
+            <!-- Main Content -->
+            <div class="col-md-9 main-content">
+                <div id="classView" style="display: none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h4 id="classTitle">Class: </h4>
+                        <div>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addStudentModal">Add Student</button>
+                            <button class="btn btn-success btn-sm" id="startAttendance">Start Attendance</button>
+                            <button class="btn btn-info btn-sm" id="markAttendance">Mark Attendance</button>
+                            <button class="btn btn-danger btn-sm" id="stopAttendance" style="display: none;">Stop Attendance</button>
+                        </div>
+                    </div>
+                    <div class="alert alert-info py-2 mb-3 d-none" id="statusBanner"></div>
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="card p-3">
+                                <h5>Students</h5>
+                                <ul class="list-group" id="studentList">
+                                    <!-- Students will be loaded here -->
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card p-3">
+                                <h5>Attendance</h5>
+                                <div class="mb-2 d-flex gap-2 align-items-center">
+                                    <label for="sessionSelect" class="mb-0">Session</label>
+                                    <select id="sessionSelect" class="form-select form-select-sm"></select>
+                                    <button class="btn btn-outline-danger btn-sm" id="deleteSession">Delete Session</button>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-bordered align-middle mb-0">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Sr No.</th>
+                                                <th>Student Name</th>
+                                                <th>ID</th>
+                                                <th>Date and Time of Session</th>
+                                                <th>Attendance</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="attendanceTableBody">
+                                            <!-- Attendance rows will be loaded here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <button class="btn btn-secondary btn-sm mt-3" id="exportCsv">Export CSV</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="noClassView">
+                    <div class="text-center mt-5">
+                        <h4>Select a class to manage students and attendance</h4>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Class Modal -->
+    <div class="modal fade" id="addClassModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add Class</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" class="form-control" id="className" placeholder="Class Name">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveClass">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Student Modal -->
+    <div class="modal fade" id="addStudentModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add Student</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="text" class="form-control mb-2" id="studentName" placeholder="Student Name">
+                    <input type="number" class="form-control" id="studentId" placeholder="Student ID">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="saveStudent">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Modals similar, but for brevity, handle in JS -->
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        let currentClassId = null;
+        let attendanceInterval = null;
+        let attendanceScanInterval = null;
+        let lastPresentCount = 0;
+        let currentSessionId = null;
+        let attendanceActive = false;
+        let attendancePollInFlight = false;
+        let seenPresentIds = new Set();
+        let attendancePrimed = false;
+        let registerPollInterval = null;
+
+        function showStatus(message, kind = 'info') {
+            $('#statusBanner')
+                .removeClass('d-none alert-info alert-success alert-warning alert-danger')
+                .addClass(`alert-${kind}`)
+                .text(message);
+        }
+
+        function clearStatus() {
+            $('#statusBanner').addClass('d-none').text('');
+        }
+
+        function loadNetworkSettings() {
+            $.get('/api/network', function(data) {
+                $('#esp32Ip').val(data.esp32_ip || '');
+            });
+        }
+
+        function saveNetworkSettings() {
+            const esp32Ip = $('#esp32Ip').val().trim();
+            if (!esp32Ip) {
+                alert('Enter ESP32 IP');
+                return;
+            }
+            $.post('/api/network', { esp32_ip: esp32Ip, esp32_use_mdns: 0 }, function(resp) {
+                if (resp.status === 'success') {
+                    alert('Network settings saved');
+                } else {
+                    alert('Error: ' + (resp.message || 'Failed to save network settings'));
+                }
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to save network settings';
+                alert('Error: ' + msg);
+            });
+        }
+
+        function detectNetworkSettings() {
+            $.get('/api/network/discover', function(resp) {
+                if (resp.status === 'success' && resp.esp32_ip) {
+                    $('#esp32Ip').val(resp.esp32_ip);
+                    alert('ESP32 detected at ' + resp.esp32_ip);
+                } else {
+                    alert('Error: ' + (resp.message || 'ESP32 not found'));
+                }
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'ESP32 not found on current network';
+                alert('Error: ' + msg);
+            });
+        }
+
+        function loadClasses() {
+            $.get('/api/classes', function(data) {
+                $('#classList').empty();
+                data.forEach(cls => {
+                    $('#classList').append(`<li class="list-group-item d-flex justify-content-between align-items-center">
+                        ${cls.name}
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary" onclick='editClass(${cls.id}, ${JSON.stringify(cls.name)})'>Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteClass(${cls.id})">Delete</button>
+                            <button class="btn btn-sm btn-primary" onclick='selectClass(${cls.id}, ${JSON.stringify(cls.name)})'>Select</button>
+                        </div>
+                    </li>`);
+                });
+
+                if (data.length > 0 && !currentClassId) {
+                    selectClass(data[0].id, data[0].name);
+                }
+            });
+        }
+
+        function selectClass(id, name) {
+            attendanceActive = false;
+            attendancePollInFlight = false;
+            if (attendanceInterval) {
+                clearInterval(attendanceInterval);
+                attendanceInterval = null;
+            }
+            if (attendanceScanInterval) {
+                clearInterval(attendanceScanInterval);
+                attendanceScanInterval = null;
+            }
+            currentClassId = id;
+            $('#classTitle').text('Class: ' + name);
+            $('#classView').show();
+            $('#noClassView').hide();
+            loadStudents();
+            lastPresentCount = 0;
+            seenPresentIds = new Set();
+            attendancePrimed = false;
+            loadSessions(true, false);
+            loadAttendance(false);
+        }
+
+        function editClass(id, currentName) {
+            const nextName = prompt('Edit class name', currentName || '');
+            if (nextName === null) return;
+            const trimmedName = nextName.trim();
+            if (!trimmedName) {
+                alert('Class name cannot be empty');
+                return;
+            }
+            $.ajax({
+                url: `/api/classes/${id}`,
+                type: 'PUT',
+                data: { name: trimmedName },
+                success: function(resp) {
+                    if (resp.status !== 'success') {
+                        alert(resp.message || 'Failed to update class');
+                        return;
+                    }
+                    const wasSelected = currentClassId === id;
+                    const selectedName = wasSelected ? trimmedName : ($('#classTitle').text().replace(/^Class:\s*/, '') || trimmedName);
+                    loadClasses();
+                    if (wasSelected) {
+                        selectClass(id, selectedName);
+                    }
+                },
+                error: function(xhr) {
+                    const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to update class';
+                    alert('Error: ' + msg);
+                }
+            });
+        }
+
+        function deleteClass(id) {
+            if (!confirm('Delete this class? This will remove its students and attendance records.')) {
+                return;
+            }
+            $.ajax({
+                url: `/api/classes/${id}`,
+                type: 'DELETE',
+                success: function(resp) {
+                    if (resp.status !== 'success') {
+                        alert(resp.message || 'Failed to delete class');
+                        return;
+                    }
+                    if (currentClassId === id) {
+                        currentClassId = null;
+                        currentSessionId = null;
+                        attendanceActive = false;
+                        attendancePrimed = false;
+                        seenPresentIds = new Set();
+                        lastPresentCount = 0;
+                        if (attendanceInterval) {
+                            clearInterval(attendanceInterval);
+                            attendanceInterval = null;
+                        }
+                        if (attendanceScanInterval) {
+                            clearInterval(attendanceScanInterval);
+                            attendanceScanInterval = null;
+                        }
+                        $('#classView').hide();
+                        $('#noClassView').show();
+                        $('#classTitle').text('Class: ');
+                        $('#studentList').empty();
+                        $('#attendanceTableBody').empty();
+                    }
+                    loadClasses();
+                },
+                error: function(xhr) {
+                    const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to delete class';
+                    alert('Error: ' + msg);
+                }
+            });
+        }
+
+        function editStudent(id, currentName) {
+            const nextName = prompt('Edit student name', currentName || '');
+            if (nextName === null) return;
+            const trimmedName = nextName.trim();
+            if (!trimmedName) {
+                alert('Student name cannot be empty');
+                return;
+            }
+            $.ajax({
+                url: `/api/students/${id}`,
+                type: 'PUT',
+                data: { name: trimmedName, id: id },
+                success: function(resp) {
+                    if (resp.status !== 'success') {
+                        alert(resp.message || 'Failed to update student');
+                        return;
+                    }
+                    loadStudents();
+                    loadAttendance(true);
+                },
+                error: function(xhr) {
+                    const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to update student';
+                    alert('Error: ' + msg);
+                }
+            });
+        }
+
+        function deleteStudent(id) {
+            if (!confirm('Delete this student?')) {
+                return;
+            }
+            $.ajax({
+                url: `/api/students/${id}`,
+                type: 'DELETE',
+                success: function(resp) {
+                    if (resp.status !== 'success') {
+                        alert(resp.message || 'Failed to delete student');
+                        return;
+                    }
+                    loadStudents();
+                    loadAttendance(true);
+                },
+                error: function(xhr) {
+                    const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to delete student';
+                    alert('Error: ' + msg);
+                }
+            });
+        }
+
+        function loadStudents() {
+            if (!currentClassId) return;
+            $.get('/api/students', { class_id: currentClassId }, function(data) {
+                $('#studentList').empty();
+                data.forEach(student => {
+                    const registerButton = student.registered == 1
+                        ? '<button class="btn btn-sm btn-secondary" disabled>Registered</button>'
+                        : `<button class="btn btn-sm btn-success" onclick='registerFingerprint(${student.id}, ${JSON.stringify(student.name)})'>Register</button>`;
+                    $('#studentList').append(`<li class="list-group-item d-flex justify-content-between align-items-center">
+                        ${student.name} (ID: ${student.id})
+                        <div>
+                            <button class="btn btn-sm btn-outline-primary" onclick='editStudent(${student.id}, ${JSON.stringify(student.name)})'>Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" onclick="deleteStudent(${student.id})">Delete</button>
+                            ${registerButton}
+                        </div>
+                    </li>`);
+                });
+            });
+        }
+
+        function startAttendance() {
+            if (!currentClassId) {
+                alert('Please select a class first');
+                return;
+            }
+            $('#startAttendance').hide();
+            $('#stopAttendance').show();
+            $.get('/api/start_attendance', { class_id: currentClassId }, function(data) {
+                if (data.status !== 'success') {
+                    alert('Error: ' + (data.message || 'Failed to start attendance'));
+                    $('#stopAttendance').hide();
+                    $('#startAttendance').show();
+                    return;
+                }
+                currentSessionId = data.session_id || null;
+                attendanceActive = true;
+                seenPresentIds = new Set();
+                attendancePrimed = false;
+                loadSessions(false, false);
+                loadAttendance(false);
+                attendanceInterval = setInterval(() => {
+                    loadAttendance(true);
+                }, 2500);
+                if (attendanceScanInterval) {
+                    clearInterval(attendanceScanInterval);
+                }
+                attendanceScanInterval = setInterval(() => {
+                    pollAttendanceMark();
+                }, 1200);
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to start attendance';
+                alert('Error: ' + msg);
+                $('#stopAttendance').hide();
+                $('#startAttendance').show();
+            });
+        }
+
+        function markAttendance() {
+            if (!currentClassId) {
+                alert('Please select a class first');
+                return;
+            }
+            showStatus('Waiting for fingerprint...', 'warning');
+            const payload = { class_id: currentClassId };
+            if (currentSessionId) {
+                payload.session_id = currentSessionId;
+            }
+            $.post('/api/manual_attendance', payload, function(resp) {
+                if (resp.status === 'success') {
+                    showStatus(resp.message || 'Attendance marked', 'success');
+                    loadAttendance(true);
+                } else {
+                    showStatus(resp.message || 'Attendance failed', 'danger');
+                    alert(resp.message || 'Attendance failed');
+                }
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Attendance failed';
+                showStatus(msg, 'danger');
+                alert('Error: ' + msg);
+            });
+        }
+
+        function stopAttendance() {
+            $('#stopAttendance').hide();
+            $('#startAttendance').show();
+            $.get('/api/stop_attendance', function() {
+                if (attendanceInterval) {
+                    clearInterval(attendanceInterval);
+                    attendanceInterval = null;
+                }
+                if (attendanceScanInterval) {
+                    clearInterval(attendanceScanInterval);
+                    attendanceScanInterval = null;
+                }
+                attendanceActive = false;
+                attendancePollInFlight = false;
+                loadSessions(false, false);
+                loadAttendance(false);
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to stop attendance';
+                alert('Error: ' + msg);
+            });
+        }
+
+        function pollAttendanceMark() {
+            if (!currentClassId) return;
+            if (attendancePollInFlight) return;
+            const params = { class_id: currentClassId };
+            if (currentSessionId) {
+                params.session_id = currentSessionId;
+            }
+            attendancePollInFlight = true;
+            $.ajax({
+                url: '/api/attendance',
+                method: 'GET',
+                data: params,
+                timeout: 17000,
+                success: function(resp) {
+                    if (resp && resp.status === 'success' && resp.updated && resp.student_id) {
+                        const msgName = resp.student_name ? resp.student_name : 'Student';
+                        showStatus(`Attendance marked: ${msgName} (ID: ${resp.student_id})`, 'success');
+                        loadAttendance(true);
+                    }
+                },
+                complete: function() {
+                    attendancePollInFlight = false;
+                }
+            });
+        }
+
+        function loadSessions(resetToLatest = false, syncAttendance = false) {
+            if (!currentClassId) return;
+            $.get('/api/sessions', { class_id: currentClassId }, function(sessions) {
+                $('#sessionSelect').empty();
+                if (!Array.isArray(sessions) || sessions.length === 0) {
+                    currentSessionId = null;
+                    $('#sessionSelect').append('<option value="">No sessions yet</option>');
+                    loadAttendance();
+                    return;
+                }
+
+                sessions.forEach((session) => {
+                    const suffix = session.ended_at ? ' (closed)' : ' (active)';
+                    $('#sessionSelect').append(`<option value="${session.id}">${session.label}${suffix}</option>`);
+                });
+
+                if (resetToLatest || !currentSessionId) {
+                    currentSessionId = sessions[0].id;
+                }
+
+                $('#sessionSelect').val(String(currentSessionId));
+                seenPresentIds = new Set();
+                attendancePrimed = false;
+                loadAttendance(syncAttendance);
+            });
+        }
+
+        function loadAttendance(syncDevice = false) {
+            if (!currentClassId) return;
+            const params = { class_id: currentClassId };
+            if (currentSessionId) {
+                params.session_id = currentSessionId;
+            }
+            if (syncDevice) {
+                params.sync = 1;
+            }
+            $.get('/api/get_attendance', params, function(data) {
+                $('#attendanceTableBody').empty();
+                const payload = (data && typeof data === 'object') ? data : {};
+                const rows = Array.isArray(payload.rows) ? payload.rows : [];
+                if (payload.session_id) {
+                    currentSessionId = payload.session_id;
+                    $('#sessionSelect').val(String(currentSessionId));
+                }
+
+                if (rows.length === 0) {
+                    $.get('/api/students', { class_id: currentClassId }, function(students) {
+                        if (!Array.isArray(students) || students.length === 0) {
+                            $('#attendanceTableBody').append('<tr><td colspan="5" class="text-center text-muted">No students in this class</td></tr>');
+                            lastPresentCount = 0;
+                            return;
+                        }
+
+                        students.forEach((student, index) => {
+                            $('#attendanceTableBody').append(`
+                                <tr>
+                                    <td>${index + 1}</td>
+                                    <td>${student.name}</td>
+                                    <td>${student.id}</td>
+                                    <td>-</td>
+                                    <td class="text-secondary fw-semibold">--</td>
+                                </tr>
+                            `);
+                        });
+                        lastPresentCount = 0;
+                    });
+                    return;
+                }
+
+                const presentRows = rows.filter(row => row.status === 'Present');
+                if (!attendancePrimed) {
+                    presentRows.forEach(row => seenPresentIds.add(String(row.id)));
+                    attendancePrimed = true;
+                } else {
+                    presentRows.forEach(row => {
+                        const key = String(row.id);
+                        if (!seenPresentIds.has(key)) {
+                            seenPresentIds.add(key);
+                            showStatus(`Attendance marked: ${row.name} (ID: ${row.id})`, 'success');
+                        }
+                    });
+                }
+                if (presentRows.length > lastPresentCount) {
+                    const latest = presentRows.reduce((best, row) => {
+                        if (!best) return row;
+                        return (row.marked_at || '') > (best.marked_at || '') ? row : best;
+                    }, null);
+                    if (latest && latest.name) {
+                        showStatus(`Attendance marked: ${latest.name} (ID: ${latest.id})`, 'success');
+                    } else {
+                        showStatus('Attendance marked successfully', 'success');
+                    }
+                }
+                lastPresentCount = presentRows.length;
+
+                rows.forEach(record => {
+                    const statusClass = record.status === 'Present' ? 'text-success fw-semibold' : 'text-danger fw-semibold';
+                    $('#attendanceTableBody').append(`
+                        <tr>
+                            <td>${record.sr_no}</td>
+                            <td>${record.name}</td>
+                            <td>${record.id}</td>
+                            <td>${record.session_time || '-'}</td>
+                            <td class="${statusClass}">${record.status}</td>
+                        </tr>
+                    `);
+                });
+            }).fail(function() {
+                $('#attendanceTableBody').empty();
+                $('#attendanceTableBody').append('<tr><td colspan="5" class="text-center text-danger">Could not load attendance. Retrying...</td></tr>');
+            });
+        }
+
+        function exportCsv() {
+            if (!currentClassId) {
+                alert('Please select a class first');
+                return;
+            }
+            const sessionPart = currentSessionId ? `&session_id=${currentSessionId}` : '';
+            window.location.href = `/api/export_csv?class_id=${currentClassId}${sessionPart}`;
+        }
+
+        // Event handlers
+        $('#saveClass').click(function() {
+            const name = $('#className').val();
+            $.post('/api/classes', {name: name}, function() {
+                loadClasses();
+                $('#addClassModal').modal('hide');
+                $('#className').val('');
+            });
+        });
+
+        $('#saveStudent').click(function() {
+            const name = $('#studentName').val();
+            const id = $('#studentId').val();
+            if (!currentClassId) {
+                alert('Please select a class first');
+                return;
+            }
+            $.post('/api/students', {name: name, id: id, class_id: currentClassId}, function(resp) {
+                if (resp.status !== 'success') {
+                    alert(resp.message || 'Failed to add student');
+                    loadAttendance(true);
+                }
+                loadStudents();
+                $('#addStudentModal').modal('hide');
+                $('#studentName').val('');
+                $('#studentId').val('');
+            });
+        });
+
+        $('#startAttendance').click(startAttendance);
+        $('#markAttendance').click(markAttendance);
+        $('#stopAttendance').click(stopAttendance);
+        $('#exportCsv').click(exportCsv);
+        $('#saveNetwork').click(saveNetworkSettings);
+        $('#detectNetwork').click(detectNetworkSettings);
+        $('#deleteSession').click(function() {
+            if (!currentSessionId) {
+                alert('Select a session first');
+                return;
+            }
+            if (!confirm('Delete this session? This will remove its attendance records.')) {
+                return;
+            }
+            $.ajax({
+                url: `/api/sessions/${currentSessionId}`,
+                type: 'DELETE',
+                success: function(resp) {
+                    if (resp.status !== 'success') {
+                        alert(resp.message || 'Failed to delete session');
+                        return;
+                    }
+                    currentSessionId = null;
+                    attendancePrimed = false;
+                    seenPresentIds = new Set();
+                    lastPresentCount = 0;
+                    loadSessions(true, false);
+                    loadAttendance(false);
+                },
+                error: function(xhr) {
+                    const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to delete session';
+                    alert('Error: ' + msg);
+                }
+            });
+        });
+        $('#sessionSelect').on('change', function() {
+            const selected = $(this).val();
+            currentSessionId = selected ? parseInt(selected, 10) : null;
+            lastPresentCount = 0;
+            seenPresentIds = new Set();
+            attendancePrimed = false;
+            loadAttendance(attendanceActive);
+        });
+
+        function registerFingerprint(student_id, student_name) {
+            showStatus(`Starting registration for ${student_name} (ID: ${student_id})...`, 'warning');
+            if (registerPollInterval) {
+                clearInterval(registerPollInterval);
+            }
+            let pollFailures = 0;
+            let pollTicks = 0;
+            registerPollInterval = setInterval(() => {
+                pollTicks += 1;
+                if (pollTicks > 180) {
+                    clearInterval(registerPollInterval);
+                    registerPollInterval = null;
+                    showStatus(`Registration timeout: ${student_name} (ID: ${student_id})`, 'danger');
+                    alert('Registration timed out. Please try again.');
+                    return;
+                }
+                $.get('/api/register_status', function(status) {
+                    if (!status || !status.job) return;
+                    pollFailures = 0;
+                    const job = status.job;
+                    const esp32State = status.esp32_state || {};
+                    const esp32StateRaw = esp32State.state || '';
+                    const rawState = (esp32StateRaw && esp32StateRaw !== 'idle') ? esp32StateRaw : (job.state || 'starting');
+                    const stateLabels = {
+                        'idle': 'idle',
+                        'starting': 'starting',
+                        'waiting_1st': 'waiting for first fingerprint',
+                        'captured_1st': 'first fingerprint captured',
+                        'remove_finger': 'remove finger',
+                        'waiting_2nd': 'waiting for second fingerprint',
+                        'captured_2nd': 'second fingerprint captured',
+                        'creating_model': 'creating fingerprint model',
+                        'saving_model': 'saving fingerprint template',
+                        'success': 'success',
+                        'failed': 'failed'
+                    };
+                    const stateText = stateLabels[rawState] || rawState;
+
+                    if (job.final_result === 'success' || rawState === 'success') {
+                        clearInterval(registerPollInterval);
+                        registerPollInterval = null;
+                        showStatus(`Registration successful: ${student_name} (ID: ${student_id})`, 'success');
+                        alert(`Registration successful for ${student_name} (ID: ${student_id})`);
+                        loadStudents();
+                    } else if (job.final_result === 'failed' || rawState === 'failed') {
+                        clearInterval(registerPollInterval);
+                        registerPollInterval = null;
+                        const espDetail = (esp32State && esp32State.detail) ? String(esp32State.detail) : '';
+                        const failMsg = job.error ? `Registration failed: ${job.error}` : (espDetail ? `Registration failed: ${espDetail}` : `Registration failed: ${student_name} (ID: ${student_id})`);
+                        showStatus(failMsg, 'danger');
+                        alert(failMsg);
+                    } else {
+                        showStatus(`Registering ${student_name} (ID: ${student_id})... ${stateText}`, 'warning');
+                    }
+                }).fail(function() {
+                    pollFailures += 1;
+                    if (pollFailures >= 5) {
+                        clearInterval(registerPollInterval);
+                        registerPollInterval = null;
+                        showStatus('Registration status connection lost', 'danger');
+                        alert('Could not read registration status from ESP32.');
+                    }
+                });
+            }, 1000);
+
+            alert('Registering fingerprint. Place the finger twice on the sensor and wait for completion.');
+            $.get(`/api/register/${student_id}`, { name: student_name }, function(data) {
+                if (data.status === 'started') {
+                    showStatus(`Registering ${student_name} (ID: ${student_id})...`, 'warning');
+                    return;
+                }
+                if (data.status === 'success') {
+                    showStatus(`Registration successful: ${student_name} (ID: ${student_id})`, 'success');
+                    if (registerPollInterval) {
+                        clearInterval(registerPollInterval);
+                        registerPollInterval = null;
+                    }
+                    loadStudents();
+                    return;
+                }
+                showStatus(`Registration failed: ${student_name} (ID: ${student_id})`, 'danger');
+                if (registerPollInterval) {
+                    clearInterval(registerPollInterval);
+                    registerPollInterval = null;
+                }
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Register request failed';
+                showStatus('Registration failed', 'danger');
+                alert('Error: ' + msg);
+                if (registerPollInterval) {
+                    clearInterval(registerPollInterval);
+                    registerPollInterval = null;
+                }
+            });
+        }
+
+        // Load classes immediately on app start so previously saved classes are visible.
+        $(function() {
+            loadNetworkSettings();
+            loadClasses();
+        });
+    </script>
+</body>
+</html>
