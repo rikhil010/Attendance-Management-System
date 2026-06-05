@@ -244,6 +244,8 @@ def setup_routes(app):
 
         def run_registration():
             try:
+                # Ensure IP is synced before attempting registration
+                auto_sync_ip()
                 response, host, err = esp32_request('/register', params=params, timeout=120)
                 if response is None:
                     set_register_job('failed', f"{student_name} | {student_id}", student_id, 

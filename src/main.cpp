@@ -42,7 +42,6 @@ unsigned long attendanceFeedbackUntilMs = 0;
 unsigned long lastIdleRefreshMs = 0;
 bool attendancePromptVisible = false;
 bool idleStatusVisible = false;
-bool showIdleWifiPage = true;
 
 // Class loading state
 int loadedClassId = -1;
@@ -93,35 +92,26 @@ void displayIdleStatus() {
     display.setTextSize(1);
     display.setCursor(0, 0);
     display.println("GWASOAT Ready");
-    if (showIdleWifiPage) {
-        display.setCursor(0, 16);
-        display.println("WiFi: " + config_manager.getWiFiSSID());
-        display.setCursor(0, 30);
-        if (sta_connected) {
-            display.println("IP: " + WiFi.localIP().toString());
-        } else {
-            display.println("AP: " + WiFi.softAPIP().toString());
-        }
-        display.setCursor(0, 46);
-        display.println(bleClientConnected ? "BLE: Connected" : "BLE: Advertising");
+    display.setCursor(0, 14);
+    display.println("WiFi: " + config_manager.getWiFiSSID());
+    display.setCursor(0, 28);
+    if (sta_connected && WiFi.status() == WL_CONNECTED) {
+        display.println("IP: " + WiFi.localIP().toString());
     } else {
-        display.setCursor(0, 16);
-        if (loadedClassId >= 0) {
-            display.println("Class: " + String(loadedClassId));
-            display.setCursor(0, 30);
-            display.println("Students: " + String(loadedStudentCount));
-        } else {
-            display.println("No class loaded");
-        }
-        display.setCursor(0, 46);
-        String sdInfo = sdCache.isReady() ? "SD: OK" : "SD: Not found";
-        display.println(sdInfo);
+        display.println("Hotspot: 192.168.4.1");
     }
+    display.setCursor(0, 42);
+    if (loadedClassId >= 0) {
+        display.println("Class: " + String(loadedClassId) + " | " + String(loadedStudentCount) + " students");
+    } else {
+        display.println("No class loaded");
+    }
+    display.setCursor(0, 54);
+    display.println(sdCache.isReady() ? "SD: Ready" : "SD: Not found");
     display.display();
     idleStatusVisible = true;
     attendancePromptVisible = false;
     lastIdleRefreshMs = millis();
-    showIdleWifiPage = !showIdleWifiPage;
 }
 
 void displayAttendancePrompt() {
