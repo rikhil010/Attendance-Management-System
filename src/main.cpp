@@ -46,6 +46,7 @@ bool idleStatusVisible = false;
 // Class loading state
 int loadedClassId = -1;
 int loadedStudentCount = 0;
+String loadedClassName = "";
 
 // Slot-to-student mapping (sensor slot → real student ID)
 #define MAX_CLASS_SIZE 255
@@ -101,7 +102,9 @@ void displayIdleStatus() {
         display.println("Hotspot: 192.168.4.1");
     }
     display.setCursor(0, 42);
-    if (loadedClassId >= 0) {
+    if (loadedClassName.length() > 0) {
+        display.println("Class: " + loadedClassName);
+    } else if (loadedClassId >= 0) {
         display.println("Class: " + String(loadedClassId) + " | " + String(loadedStudentCount) + " students");
     } else {
         display.println("No class loaded");
@@ -119,15 +122,19 @@ void displayAttendancePrompt() {
     display.setTextColor(SSD1306_WHITE);
     display.setTextSize(1);
     display.setCursor(0, 0);
-    display.println("Attendance Mode");
-    display.setCursor(0, 16);
-    display.println("Place finger on");
-    display.setCursor(0, 28);
-    display.println("sensor...");
-    if (loadedClassId >= 0) {
-        display.setCursor(0, 46);
-        display.println("Class " + String(loadedClassId) + " (" + String(loadedStudentCount) + " students)");
+    if (loadedClassName.length() > 0) {
+        display.println("Class: " + loadedClassName);
+    } else if (loadedClassId >= 0) {
+        display.println("Class ID: " + String(loadedClassId));
+    } else {
+        display.println("Attendance Mode");
     }
+    display.setCursor(0, 16);
+    display.println("Place finger to");
+    display.setCursor(0, 28);
+    display.println("mark attendance");
+    display.setCursor(0, 46);
+    display.println(String(loadedStudentCount) + " students loaded");
     display.display();
     attendancePromptVisible = true;
     idleStatusVisible = false;
@@ -588,10 +595,12 @@ void processCommand(const String& jsonCmd, String& response) {
     }
     else if (cmd == "start_attendance") {
         if (!attendance_mode) {
-            // Only clear buffer when first starting (not on repeat calls)
             attendance.clear();
         }
         attendance_mode = true;
+        if (doc.containsKey("class_name")) {
+            loadedClassName = doc["class_name"].as<String>();
+        }
         attendanceFeedbackUntilMs = 0;
         attendancePromptVisible = false;
         displayAttendancePrompt();

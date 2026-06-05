@@ -212,7 +212,9 @@ def start_attendance_session(class_id):
         ).fetchone()
         if existing is not None:
             conn = get_connection()
-            conn.send_command({"cmd": "start_attendance"}, timeout=6.0)
+            class_name_row = db.execute("SELECT name FROM classes WHERE id = ?", (class_id,)).fetchone()
+            c_name = class_name_row["name"] if class_name_row else str(class_id)
+            conn.send_command({"cmd": "start_attendance", "class_name": c_name}, timeout=6.0)
             db.close()
             return {
                 'status': 'success',
@@ -241,12 +243,16 @@ def start_attendance_session(class_id):
         # Still try to start - maybe templates are already on device
         print(f"[REG] Warning: class load failed: {load_result.get('message')}")
 
+    # Get class name for OLED display
+    class_name_row = db.execute("SELECT name FROM classes WHERE id = ?", (class_id,)).fetchone()
+    class_name = class_name_row["name"] if class_name_row else str(class_id)
+
     # Clear device attendance buffer (uses ConnectionManager with BLE fallback)
     conn = get_connection()
     conn.send_command({"cmd": "clear_attendance"}, timeout=3.0)
 
     # Start attendance on ESP32 (uses ConnectionManager with BLE fallback)
-    result = conn.send_command({"cmd": "start_attendance"}, timeout=8.0)
+    result = conn.send_command({"cmd": "start_attendance", "class_name": class_name}, timeout=8.0)
     if result is None:
         db.close()
         return {'status': 'error', 'message': 'Cannot connect to ESP32 (WiFi and BLE both failed).'}, 502
