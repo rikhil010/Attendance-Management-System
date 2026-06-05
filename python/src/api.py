@@ -293,12 +293,11 @@ def setup_routes(app):
     def attendance():
         class_id = request.args.get('class_id', type=int)
         session_id = request.args.get('session_id', type=int)
-        response, host, err = esp32_request('/attendance', timeout=15)
         
-        if response is None:
-            return jsonify({'status': 'error', 'message': f'Cannot connect to ESP32. {err}'}), 502
+        # Try WiFi first
+        response, host, err = esp32_request('/attendance', timeout=3)
         
-        if response.status_code == 200:
+        if response is not None and response.status_code == 200:
             text = response.text or ''
             updated = False
             sid = None
@@ -313,10 +312,27 @@ def setup_routes(app):
                 if m:
                     sid = int(m.group(1))
                     updated = mark_student_present(sid, class_id=class_id, session_id=session_id)
-            return jsonify({'status': 'success', 'esp32_host': host, 'message': text,
+            return jsonify({'status': 'success', 'message': text,
                           'updated': updated, 'student_id': sid, 'student_name': sname})
         
-        return jsonify({'status': 'error', 'message': response.text, 'esp32_host': host}), response.status_code
+        # WiFi failed — try BLE via ConnectionManager
+        conn = get_connection()
+        result = conn.send_command({"cmd": "get_attendance"}, timeout=5.0)
+        if result is not None:
+            # Parse attendance array from BLE response
+            records = result if isinstance(result, list) else []
+            if records:
+                last = records[-1] if records else {}
+                sid = last.get("id")
+                sname = last.get("name", "")
+                if sid:
+                    updated = mark_student_present(sid, sname, class_id=class_id, session_id=session_id)
+                    return jsonify({'status': 'success', 'updated': updated,
+                                  'student_id': sid, 'student_name': sname,
+                                  'message': f'Attendance marked for {sname} (ID: {sid})'})
+            return jsonify({'status': 'success', 'updated': False, 'message': 'Waiting for fingerprint'})
+        
+        return jsonify({'status': 'error', 'message': 'Cannot connect to ESP32 (WiFi and BLE failed)'}), 502
 
     @app.route('/api/get_attendance')
     def get_attendance():

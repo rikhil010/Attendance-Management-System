@@ -211,11 +211,11 @@ def start_attendance_session(class_id):
             (resolved_session_id,)
         ).fetchone()
         if existing is not None:
-            esp32_request('/start_attendance', timeout=6)
+            conn = get_connection()
+            conn.send_command({"cmd": "start_attendance"}, timeout=6.0)
             db.close()
             return {
                 'status': 'success',
-                'esp32_host': get_last_working_host() or '',
                 'class_id': class_id,
                 'session_id': int(existing['id']),
                 'session_time': existing['started_at']
@@ -241,25 +241,19 @@ def start_attendance_session(class_id):
         # Still try to start - maybe templates are already on device
         print(f"[REG] Warning: class load failed: {load_result.get('message')}")
 
-    # Clear device attendance buffer
-    esp32_request('/clear_attendance', timeout=2)
+    # Clear device attendance buffer (uses ConnectionManager with BLE fallback)
+    conn = get_connection()
+    conn.send_command({"cmd": "clear_attendance"}, timeout=3.0)
 
-    # Start attendance on ESP32
-    response, host, err = esp32_request('/start_attendance', timeout=8)
-    if response is None:
-        found = discover_esp32_host()
-        if found and found.get('host'):
-            set_last_working_host(found.get('host'))
-        response, host, err = esp32_request('/start_attendance', timeout=8)
-
-    if response is None:
+    # Start attendance on ESP32 (uses ConnectionManager with BLE fallback)
+    result = conn.send_command({"cmd": "start_attendance"}, timeout=8.0)
+    if result is None:
         db.close()
-        return {'status': 'error', 'message': f'Cannot connect to ESP32. {err}'}, 502
+        return {'status': 'error', 'message': 'Cannot connect to ESP32 (WiFi and BLE both failed).'}, 502
 
-    if response.status_code != 200:
+    if result.get("status") != "success":
         db.close()
-        return ({'status': 'error', 'message': response.text,
-                 'esp32_host': host}, response.status_code)
+        return {'status': 'error', 'message': result.get('message', 'Start failed')}, 500
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = db.execute(
@@ -358,7 +352,12 @@ def stop_attendance_session():
 
     response, host, err = esp32_request('/stop_attendance')
     if response is None:
-        return {'status': 'error', 'message': f'Cannot connect to ESP32. {err}'}, 502
+        # Try via ConnectionManager (BLE fallback)
+        conn = get_connection()
+        result = conn.send_command({"cmd": "stop_attendance"}, timeout=5.0)
+        if result is None:
+            return {'status': 'error', 'message': 'Cannot connect to ESP32.'}, 502
+        return {'status': 'success'}
 
     if response.status_code == 200:
         return {'status': 'success', 'esp32_host': host}
