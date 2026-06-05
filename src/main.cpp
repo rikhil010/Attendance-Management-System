@@ -794,11 +794,16 @@ void setupLegacyRoutes() {
     });
 
     server.on("/attendance", HTTP_GET, [](AsyncWebServerRequest* req) {
-        // Non-blocking: just return latest attendance data
-        // The ESP32 loop() handles continuous scanning automatically
-        String resp;
-        processCommand("{\"cmd\":\"get_attendance\"}", resp);
-        req->send(200, "application/json", resp);
+        // Return the last attendance mark (for backward-compat with Python app polling)
+        if (attendance.size() > 0) {
+            JsonObject last = attendance[attendance.size() - 1];
+            int sid = last["id"] | 0;
+            String name = last["name"] | "Unknown";
+            String msg = "Attendance marked for " + name + " (ID: " + String(sid) + ")";
+            req->send(200, "text/plain", msg);
+        } else {
+            req->send(200, "text/plain", "Waiting for fingerprint");
+        }
     });
     
     server.on("/get_attendance", HTTP_GET, [](AsyncWebServerRequest* req) {
@@ -1055,11 +1060,19 @@ void loop() {
                             holdDisplayFor(1200);
                         }
                         
-                        // Wait for finger removal before next scan
-                        fp.waitForRemoval(3000);
+                        // Wait briefly for finger removal, then continue regardless
+                        unsigned long rmStart = millis();
+                        while (millis() - rmStart < 1500) {
+                            if (!fp.getImage()) break;  // Finger removed
+                            delay(100);
+                        }
+                        // Extra pause to let display show before going back to prompt
+                        delay(500);
+                        attendancePromptVisible = false;
                     } else {
                         displayAttendanceResult(false, "", 0);
-                        fp.waitForRemoval(2000);
+                        delay(1500);
+                        attendancePromptVisible = false;
                     }
                 }
             }
