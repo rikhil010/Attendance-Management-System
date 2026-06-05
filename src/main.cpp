@@ -57,6 +57,15 @@ String slotToName[MAX_CLASS_SIZE];
 DynamicJsonDocument attendance(4096);
 DynamicJsonDocument studentRoster(4096);
 
+// Save roster to SPIFFS
+void saveStudentRoster() {
+    File file = SPIFFS.open("/students.json", "w");
+    if (file) {
+        serializeJson(studentRoster, file);
+        file.close();
+    }
+}
+
 // Fallback AP
 const char* AP_SSID = "GWASOAT-Device";
 const char* AP_PASSWORD = "Attend1234";
@@ -402,6 +411,7 @@ void enrollTask(void* param) {
     
     // Update roster AND slot mapping
     studentRoster[String(id)] = name;
+    saveStudentRoster();
     if (id < MAX_CLASS_SIZE) {
         slotToStudent[id] = id;
         slotToName[id] = name;
