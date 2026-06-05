@@ -583,13 +583,18 @@ void processCommand(const String& jsonCmd, String& response) {
         }
     }
     else if (cmd == "start_attendance") {
+        if (!attendance_mode) {
+            // Only clear buffer when first starting (not on repeat calls)
+            attendance.clear();
+        }
         attendance_mode = true;
-        attendance.clear();
         attendanceFeedbackUntilMs = 0;
+        attendancePromptVisible = false;
         displayAttendancePrompt();
         resp["status"] = "success";
         resp["class_id"] = loadedClassId;
         resp["students"] = loadedStudentCount;
+        resp["message"] = "Attendance started";
     }
     else if (cmd == "stop_attendance") {
         attendance_mode = false;
@@ -789,8 +794,10 @@ void setupLegacyRoutes() {
     });
 
     server.on("/attendance", HTTP_GET, [](AsyncWebServerRequest* req) {
+        // Non-blocking: just return latest attendance data
+        // The ESP32 loop() handles continuous scanning automatically
         String resp;
-        processCommand("{\"cmd\":\"attendance\"}", resp);
+        processCommand("{\"cmd\":\"get_attendance\"}", resp);
         req->send(200, "application/json", resp);
     });
     
@@ -945,11 +952,30 @@ void setup() {
 
 // ─── Main Loop ──────────────────────────────────────────────
 void loop() {
-    // Respect display hold
-    if (millis() < displayHoldUntilMs) {
-        delay(10);
-        return;
+    // WiFi auto-reconnect check (every 30 seconds)
+    static unsigned long lastWifiCheck = 0;
+    if (millis() - lastWifiCheck > 30000) {
+        lastWifiCheck = millis();
+        if (WiFi.status() != WL_CONNECTED) {
+            sta_connected = false;
+            Serial.println("[WIFI] Disconnected, reconnecting...");
+            WiFi.reconnect();
+            unsigned long reconStart = millis();
+            while (WiFi.status() != WL_CONNECTED && millis() - reconStart < 5000) {
+                delay(250);
+            }
+            if (WiFi.status() == WL_CONNECTED) {
+                sta_connected = true;
+                Serial.print("[WIFI] Reconnected: ");
+                Serial.println(WiFi.localIP());
+            }
+        } else {
+            sta_connected = true;
+        }
     }
+
+    // Respect display hold (but DON'T skip attendance scanning)
+    bool displayHeld = (millis() < displayHoldUntilMs);
     
     // Don't interfere during registration
     if (isRegisterBusy()) {
@@ -957,18 +983,19 @@ void loop() {
         return;
     }
     
-    // Attendance mode: auto-scan
+    // Attendance mode: continuously scan for fingers
     if (attendance_mode) {
+        // Update display only when not held
+        if (!displayHeld && millis() > attendanceFeedbackUntilMs && !attendancePromptVisible) {
+            displayAttendancePrompt();
+        }
+        
+        // Always try to detect a finger (non-blocking single check)
         if (millis() > attendanceFeedbackUntilMs) {
-            if (!attendancePromptVisible) {
-                displayAttendancePrompt();
-            }
-            
-            // Try to detect a finger
             if (fp.getImage()) {
-                delay(300);
+                delay(200);
                 if (fp.img2Tz(1)) {
-                    int slotId = fp.search(1, 0, (uint16_t)loadedStudentCount);
+                    int slotId = fp.search(1, 0, (uint16_t)(loadedStudentCount > 0 ? loadedStudentCount : 255));
                     if (slotId < 0) {
                         delay(100);
                         slotId = fp.search(1, 0, 255);
@@ -978,10 +1005,15 @@ void loop() {
                         int studentId = slotToStudent[slotId];
                         String name = slotToName[slotId];
                         if (name.length() == 0) {
-                            name = studentRoster[String(studentId)] | "Unknown";
+                            String key = String(studentId);
+                            if (studentRoster.containsKey(key)) {
+                                name = studentRoster[key].as<String>();
+                            } else {
+                                name = "ID:" + String(studentId);
+                            }
                         }
                         
-                        // Check if already marked
+                        // Check if already marked this session
                         bool alreadyMarked = false;
                         for (size_t i = 0; i < attendance.size(); i++) {
                             if (attendance[i]["id"] == studentId) {
@@ -1011,13 +1043,19 @@ void loop() {
                             serializeJson(ev, evJson);
                             bleNotifyStatus(evJson);
                             
+                            Serial.print("[ATT] Marked: ");
+                            Serial.print(name);
+                            Serial.print(" (ID:");
+                            Serial.print(studentId);
+                            Serial.println(")");
+                            
                             displayAttendanceResult(true, name, studentId);
                         } else {
                             displayMessage("Already Marked", name.substring(0, 10));
-                            holdDisplayFor(1500);
+                            holdDisplayFor(1200);
                         }
                         
-                        // Wait for finger removal
+                        // Wait for finger removal before next scan
                         fp.waitForRemoval(3000);
                     } else {
                         displayAttendanceResult(false, "", 0);
@@ -1026,12 +1064,13 @@ void loop() {
                 }
             }
         }
+        
+        delay(50);  // Small delay between scan attempts
     } else {
         // Idle display rotation
-        if (!idleStatusVisible || millis() - lastIdleRefreshMs > 4000) {
+        if (!displayHeld && (!idleStatusVisible || millis() - lastIdleRefreshMs > 4000)) {
             displayIdleStatus();
         }
+        delay(100);
     }
-    
-    delay(100);
 }
