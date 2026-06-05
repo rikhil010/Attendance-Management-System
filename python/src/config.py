@@ -9,7 +9,7 @@ from typing import Optional, List, Dict, Any
 
 # Default configuration values
 DEFAULTS = {
-    "esp32_ip": "192.168.0.102",
+    "esp32_ip": "192.168.0.103",
     "esp32_use_mdns": "0",
     "wifi_ssid": "",
     "wifi_password": "",
@@ -96,7 +96,7 @@ class ConfigManager:
             hosts.append("esp32.local")
 
         # Add fallback hosts
-        for fallback in ["192.168.0.102", "esp32.local"]:
+        for fallback in ["192.168.0.103", "esp32.local"]:
             if fallback not in hosts:
                 hosts.append(fallback)
 

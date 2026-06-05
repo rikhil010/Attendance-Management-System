@@ -2,8 +2,13 @@
 Attendance tracking and management module.
 """
 
+import sys
+import os
 import re
 from datetime import datetime
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from database import get_db
 from network import esp32_request
 
@@ -13,9 +18,9 @@ session_marked_student_ids = set()
 
 def mark_student_present(student_id, student_name='', class_id=None, session_id=None, fingerprint_time=''):
     """Mark a student as present in attendance."""
-    from registration import _resolve_active_session
+    import registration
     
-    target_class_id, target_session_id = _resolve_active_session(class_id, session_id)
+    target_class_id, target_session_id = registration._resolve_active_session(class_id, session_id)
     if target_class_id is None or target_session_id is None:
         return False
 

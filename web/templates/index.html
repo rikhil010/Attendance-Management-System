@@ -71,9 +71,10 @@
                 <div class="card p-2 mb-3">
                     <label class="form-label mb-1" for="esp32Ip">ESP32 IP</label>
                     <input type="text" class="form-control form-control-sm mb-2" id="esp32Ip" placeholder="192.168.x.x">
-                    <div class="d-flex gap-2">
+                    <div class="d-flex gap-2 flex-wrap">
                         <button class="btn btn-outline-primary btn-sm" id="saveNetwork">Save Network</button>
                         <button class="btn btn-outline-success btn-sm" id="detectNetwork">Detect ESP32</button>
+                        <button class="btn btn-outline-info btn-sm" id="detectBLE">Detect BLE</button>
                     </div>
                 </div>
                 <button class="btn btn-primary btn-sm mb-3" data-bs-toggle="modal" data-bs-target="#addClassModal">Add Class</button>
@@ -242,6 +243,29 @@
             }).fail(function(xhr) {
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'ESP32 not found on current network';
                 alert('Error: ' + msg);
+            });
+        }
+
+        function detectBLESettings() {
+            alert('Scanning for ESP32 via Bluetooth...');
+            $.get('/api/network/discover_ble', function(resp) {
+                if (resp.status === 'success') {
+                    alert('ESP32 found via BLE:\n' +
+                          'Device: ' + resp.device_name + '\n' +
+                          'Address: ' + resp.device_address + '\n' +
+                          'Signal: ' + resp.signal_strength + ' dBm\n\n' +
+                          'Note: Use WiFi discovery to get the IP address for connection');
+                } else if (resp.status === 'not_found') {
+                    alert('No ESP32 found via Bluetooth. Make sure:\n' +
+                          '1. ESP32 is powered on\n' +
+                          '2. BLE is enabled on ESP32\n' +
+                          '3. WiFi discovery is preferred for most use cases');
+                } else {
+                    alert('BLE Error: ' + (resp.message || 'Unknown error'));
+                }
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'BLE discovery failed';
+                alert('Error: ' + msg + '\n\nNote: Install bleak library if BLE is needed:\npip install bleak');
             });
         }
 
@@ -697,6 +721,7 @@
         $('#exportCsv').click(exportCsv);
         $('#saveNetwork').click(saveNetworkSettings);
         $('#detectNetwork').click(detectNetworkSettings);
+        $('#detectBLE').click(detectBLESettings);
         $('#deleteSession').click(function() {
             if (!currentSessionId) {
                 alert('Select a session first');

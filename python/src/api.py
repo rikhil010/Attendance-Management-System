@@ -3,11 +3,16 @@ Flask API routes module.
 Handles all HTTP endpoints for the attendance system.
 """
 
+import sys
+import os
 import re
 import io
 import csv
 import threading
 from flask import render_template, request, jsonify, send_file
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from config import get_config
 from database import (
     get_db, initialize_database, get_classes, add_class, update_class, 
@@ -20,8 +25,24 @@ from attendance import (
 )
 from registration import (
     _resolve_active_session, set_register_job, get_register_job_snapshot,
-    start_attendance_session, stop_attendance_session, register_lock
+    start_attendance_session, stop_attendance_session, register_lock,
+    extract_and_upload_template, load_class_to_device
 )
+from connection import get_connection
+from cloud_sync import get_cloud
+
+# Try to import BLE functionality, but don't fail if bleak is not installed
+try:
+    from ble import discover_esp32_ble, get_ble_status
+    ble_available = True
+except ImportError:
+    ble_available = False
+    # Provide fallback functions
+    def discover_esp32_ble(timeout=10):
+        return None, "BLE module not available"
+    
+    def get_ble_status():
+        return {'available': False, 'message': 'bleak library not installed'}
 
 # Initialize database on module load
 initialize_database()
@@ -68,6 +89,37 @@ def setup_routes(app):
         get_config().set("esp32_ip", host)
         set_last_working_host(host)
         return jsonify({'status': 'success', 'esp32_ip': host, 'device_status': found.get("status", {})})
+
+    @app.route('/api/network/discover_ble', methods=['GET'])
+    def discover_ble():
+        """Discover ESP32 via Bluetooth Low Energy."""
+        ble_status = get_ble_status()
+        if not ble_status.get('available'):
+            return jsonify({
+                'status': 'error', 
+                'message': ble_status.get('message', 'BLE not available')
+            }), 400
+        
+        # Run BLE discovery in a thread to avoid blocking
+        def run_ble_scan():
+            return discover_esp32_ble(timeout=10)
+        
+        try:
+            result = discover_esp32_ble(timeout=10)
+            if result.get('status') == 'success':
+                return jsonify(result)
+            else:
+                return jsonify(result), 404
+        except Exception as e:
+            return jsonify({
+                'status': 'error',
+                'message': f'BLE discovery failed: {str(e)}'
+            }), 500
+
+    @app.route('/api/network/ble_status', methods=['GET'])
+    def ble_status():
+        """Get BLE module status."""
+        return jsonify(get_ble_status())
 
     @app.route('/api/classes', methods=['GET', 'POST'])
     def classes():
@@ -151,6 +203,12 @@ def setup_routes(app):
                     db.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
                     db.commit()
                     db.close()
+                    # Extract template from ESP32 and upload to cloud
+                    class_id_for_reg = request.args.get('class_id', type=int) or 0
+                    try:
+                        extract_and_upload_template(student_id, student_name, class_id_for_reg)
+                    except Exception as cloud_err:
+                        print(f"[REG] Cloud upload warning: {cloud_err}")
                     set_register_job('success', f"{student_name} | {student_id}", student_id, 
                                    student_name, 'success')
                     return
@@ -207,6 +265,16 @@ def setup_routes(app):
         class_id = request.args.get('class_id', type=int)
         if class_id is None:
             return jsonify({'status': 'error', 'message': 'Missing class_id'}), 400
+        
+        # Pre-check: Ensure ESP32 is reachable before starting attendance
+        response, host, err = esp32_request('/status', timeout=5)
+        if response is None:
+            return jsonify({
+                'status': 'error', 
+                'message': f'Cannot reach ESP32. Please check connection and try again. Error: {err}'
+            }), 502
+        
+        # ESP32 is reachable, start attendance
         return start_attendance_session(class_id)
 
     @app.route('/api/stop_attendance')
@@ -305,3 +373,64 @@ def setup_routes(app):
         output.seek(0)
         return send_file(io.BytesIO(output.getvalue().encode()), 
                         mimetype='text/csv', as_attachment=True, download_name='attendance.csv')
+
+    # ─── New Routes: Cloud Sync, Class Loading, Connection Info ───
+
+    @app.route('/api/load_class', methods=['POST'])
+    def load_class():
+        """Load class templates from cloud to ESP32 device."""
+        class_id = request.form.get('class_id', type=int)
+        if class_id is None:
+            return jsonify({'status': 'error', 'message': 'Missing class_id'}), 400
+        result = load_class_to_device(class_id)
+        return jsonify(result)
+
+    @app.route('/api/connection', methods=['GET'])
+    def connection_info():
+        """Get current connection status (WiFi/BLE)."""
+        conn = get_connection()
+        info = conn.get_connection_info()
+        return jsonify(info)
+
+    @app.route('/api/connection/ble_connect', methods=['POST'])
+    def ble_connect():
+        """Manually trigger BLE connection."""
+        conn = get_connection()
+        success = conn.connect_ble()
+        return jsonify({
+            'status': 'success' if success else 'error',
+            'ble_connected': success,
+            'mode': conn.mode
+        })
+
+    @app.route('/api/cloud/status', methods=['GET'])
+    def cloud_status():
+        """Check cloud connectivity."""
+        cloud = get_cloud()
+        online = cloud.check_connection()
+        return jsonify({
+            'status': 'success',
+            'online': online,
+            'base_url': cloud.base_url
+        })
+
+    @app.route('/api/cloud/sync', methods=['POST'])
+    def cloud_sync():
+        """Sync pending uploads (templates + attendance) to cloud."""
+        cloud = get_cloud()
+        templates_synced = cloud.sync_pending_templates()
+        attendance_synced = cloud.sync_pending_attendance()
+        return jsonify({
+            'status': 'success',
+            'templates_synced': templates_synced,
+            'attendance_synced': attendance_synced
+        })
+
+    @app.route('/api/device/status', methods=['GET'])
+    def device_status():
+        """Get ESP32 device status via ConnectionManager."""
+        conn = get_connection()
+        result = conn.get_status()
+        if result:
+            return jsonify(result)
+        return jsonify({'status': 'error', 'message': 'Cannot reach device'}), 502

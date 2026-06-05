@@ -1,13 +1,19 @@
 """
 Network and ESP32 communication module.
-Handles all ESP32 device requests and network operations.
+Now uses the hybrid ConnectionManager (WiFi + BLE).
+Legacy esp32_request() function maintained for backward compatibility.
 """
 
 import requests
 import socket
 import ipaddress
 import concurrent.futures
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from config import get_config
+from connection import get_connection
 
 last_working_host = None
 
@@ -16,6 +22,8 @@ def set_last_working_host(host):
     """Update last working host."""
     global last_working_host
     last_working_host = host
+    conn = get_connection()
+    conn.set_wifi_host(host)
 
 
 def get_last_working_host():
@@ -23,8 +31,16 @@ def get_last_working_host():
     return last_working_host
 
 
-def esp32_request(path, params=None, timeout=3):
-    """Make HTTP request to ESP32 with intelligent host fallback."""
+def esp32_request(path, params=None, timeout=10):
+    """
+    Make HTTP request to ESP32 with intelligent host fallback.
+    This is the legacy interface - still works for backward compatibility.
+    
+    Args:
+        path: API endpoint path (e.g., '/status')
+        params: Query parameters dict
+        timeout: Request timeout in seconds (default 10s for reliability)
+    """
     global last_working_host
     cfg = get_config()
     hosts_from_settings = cfg.get_esp32_hosts()
@@ -42,12 +58,18 @@ def esp32_request(path, params=None, timeout=3):
         try:
             response = requests.get(url, params=params, timeout=timeout)
             last_working_host = host
+            # Keep ConnectionManager in sync
+            get_connection().set_wifi_host(host)
+            get_connection().wifi_healthy = True
             return response, host, None
         except requests.RequestException as ex:
             errors.append(f"{host}: {ex}")
 
     if not errors:
         errors.append("No ESP32 hosts configured")
+    
+    # Mark WiFi as unhealthy
+    get_connection().wifi_healthy = False
     return None, None, " | ".join(errors)
 
 
@@ -63,8 +85,17 @@ def get_local_ipv4():
         return ""
 
 
-def probe_esp32_host(host, timeout=0.35):
-    """Probe a single ESP32 host for status."""
+def probe_esp32_host(host, timeout=1.0):
+    """
+    Probe a single ESP32 host for status.
+    
+    Args:
+        host: ESP32 IP or hostname
+        timeout: Probe timeout in seconds
+        
+    Returns:
+        Dict with host and status, or None if unreachable
+    """
     try:
         response = requests.get(f"http://{host}/status", timeout=timeout)
         if response.status_code != 200:
@@ -81,18 +112,17 @@ def discover_esp32_host():
     """Discover ESP32 host on network with intelligent fallback."""
     cfg = get_config()
     
-    # First, try likely hosts quickly
     likely_hosts = []
-    for h in [last_working_host, cfg.get("esp32_ip"), "192.168.0.102"]:
+    for h in [last_working_host, cfg.get("esp32_ip"), "192.168.0.103"]:
         if h and h not in likely_hosts:
             likely_hosts.append(h)
 
     for host in likely_hosts:
         found = probe_esp32_host(host, timeout=0.6)
         if found:
+            set_last_working_host(found["host"])
             return found
 
-    # Then scan current local /24 subnet
     local_ip = get_local_ipv4()
     if not local_ip:
         return None
@@ -105,12 +135,13 @@ def discover_esp32_host():
     candidate_hosts = [str(ip) for ip in network.hosts()]
     with concurrent.futures.ThreadPoolExecutor(max_workers=48) as executor:
         futures = [
-            executor.submit(probe_esp32_host, host, 0.25) 
+            executor.submit(probe_esp32_host, host, 0.25)
             for host in candidate_hosts
         ]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
             if result:
+                set_last_working_host(result["host"])
                 return result
 
     return None

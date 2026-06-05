@@ -1,0 +1,64 @@
+(kicad_sch
+  (version 20231120)
+  (generator "kicad_symbol_editor")
+  (generator_version "8.0")
+  (uuid "e63e39d7-6ac0-4ffd-8aa3-1841a4541b55")
+  (paper "A4")
+  (title_block
+    (title "GWASOAT - Attendance System PCB")
+    (date "2026-05-20")
+    (rev "1.0")
+    (comment 1 "2-Layer PCB Design")
+    (comment 2 "ESP32-WROOM-32E Based")
+  )
+
+  (lib_symbols
+  )
+
+  (text "GWASOAT Attendance System\n2-Layer PCB\nESP32-WROOM-32E + FPM383C + SSD1306 + MicroSD"
+    (exclude_from_sim no)
+    (at 148.59 30.48 0)
+    (effects
+      (font
+        (size 2.54 2.54)
+      )
+    )
+    (uuid "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+  )
+
+  (text "POWER SECTION"
+    (exclude_from_sim no)
+    (at 50.8 55.88 0)
+    (effects
+      (font
+        (size 1.27 1.27)
+        (bold yes)
+      )
+    )
+    (uuid "b1b2c3d4-e5f6-7890-abcd-ef1234567891")
+  )
+
+  (text "ESP32 CORE"
+    (exclude_from_sim no)
+    (at 148.59 55.88 0)
+    (effects
+      (font
+        (size 1.27 1.27)
+        (bold yes)
+      )
+    )
+    (uuid "c1b2c3d4-e5f6-7890-abcd-ef1234567892")
+  )
+
+  (text "PERIPHERALS"
+    (exclude_from_sim no)
+    (at 248.92 55.88 0)
+    (effects
+      (font
+        (size 1.27 1.27)
+        (bold yes)
+      )
+    )
+    (uuid "d1b2c3d4-e5f6-7890-abcd-ef1234567893")
+  )
+)
