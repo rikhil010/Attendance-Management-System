@@ -400,8 +400,12 @@ void enrollTask(void* param) {
     setRegisterState("extracting", name);
     int tplLen = extractAndSaveTemplate(id, classId, id);
     
-    // Update roster
+    // Update roster AND slot mapping
     studentRoster[String(id)] = name;
+    if (id < MAX_CLASS_SIZE) {
+        slotToStudent[id] = id;
+        slotToName[id] = name;
+    }
     
     // Success
     setRegisterState("success", name + " | " + String(id));
@@ -795,7 +799,10 @@ void setupLegacyRoutes() {
 
     server.on("/attendance", HTTP_GET, [](AsyncWebServerRequest* req) {
         // Return the last attendance mark (for backward-compat with Python app polling)
-        if (attendance.size() > 0) {
+        // Include count so the app can detect new marks vs stale data
+        static size_t lastReportedCount = 0;
+        if (attendance.size() > 0 && attendance.size() != lastReportedCount) {
+            lastReportedCount = attendance.size();
             JsonObject last = attendance[attendance.size() - 1];
             int sid = last["id"] | 0;
             String name = last["name"] | "Unknown";
@@ -1008,6 +1015,8 @@ void loop() {
                     
                     if (slotId >= 0 && slotId < MAX_CLASS_SIZE) {
                         int studentId = slotToStudent[slotId];
+                        // If no class was loaded, slot ID = student ID (direct registration)
+                        if (studentId < 0) studentId = slotId;
                         String name = slotToName[slotId];
                         if (name.length() == 0) {
                             String key = String(studentId);
