@@ -92,28 +92,36 @@ def setup_routes(app):
 
     @app.route('/api/network/discover_ble', methods=['GET'])
     def discover_ble():
-        """Discover ESP32 via Bluetooth Low Energy."""
-        ble_status = get_ble_status()
-        if not ble_status.get('available'):
+        """Discover ESP32 via BLE and connect."""
+        conn = get_connection()
+        conn_info = conn.get_connection_info()
+        
+        if not conn_info.get('ble_available'):
             return jsonify({
-                'status': 'error', 
-                'message': ble_status.get('message', 'BLE not available')
+                'status': 'error',
+                'message': 'BLE not available. Install bleak: pip install bleak'
             }), 400
-        
-        # Run BLE discovery in a thread to avoid blocking
-        def run_ble_scan():
-            return discover_esp32_ble(timeout=10)
-        
+
         try:
-            result = discover_esp32_ble(timeout=10)
-            if result.get('status') == 'success':
-                return jsonify(result)
+            success = conn.connect_ble()
+            if success:
+                # Try to get device status over BLE to confirm it works
+                status = conn.get_status()
+                return jsonify({
+                    'status': 'success',
+                    'message': 'Connected to GWASOAT device via BLE',
+                    'ble_address': conn.ble_address,
+                    'device_status': status or {}
+                })
             else:
-                return jsonify(result), 404
+                return jsonify({
+                    'status': 'not_found',
+                    'message': 'GWASOAT device not found. Make sure ESP32 is powered on.'
+                }), 404
         except Exception as e:
             return jsonify({
                 'status': 'error',
-                'message': f'BLE discovery failed: {str(e)}'
+                'message': f'BLE connection failed: {str(e)}'
             }), 500
 
     @app.route('/api/network/ble_status', methods=['GET'])
