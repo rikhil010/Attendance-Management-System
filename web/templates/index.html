@@ -684,21 +684,32 @@
         });
 
         $('#saveStudent').click(function() {
-            const name = $('#studentName').val();
-            const id = $('#studentId').val();
+            const name = $('#studentName').val().trim();
+            const id = $('#studentId').val().trim();
+            if (!name) {
+                alert('Please enter a student name');
+                return;
+            }
+            if (!id) {
+                alert('Please enter a student ID');
+                return;
+            }
             if (!currentClassId) {
                 alert('Please select a class first');
                 return;
             }
             $.post('/api/students', {name: name, id: id, class_id: currentClassId}, function(resp) {
                 if (resp.status !== 'success') {
-                    alert(resp.message || 'Failed to add student');
-                    loadAttendance(true);
+                    alert('ID ' + id + ' is already in use. Please choose another ID.');
+                    return;
                 }
                 loadStudents();
                 $('#addStudentModal').modal('hide');
                 $('#studentName').val('');
                 $('#studentId').val('');
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to add student';
+                alert('ID ' + id + ' is already in use. Please choose another ID.');
             });
         });
 

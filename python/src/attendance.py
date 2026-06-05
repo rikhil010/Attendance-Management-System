@@ -25,11 +25,17 @@ def mark_student_present(student_id, student_name='', class_id=None, session_id=
         return False
 
     db = get_db()
+    # Check student exists AND belongs to the active class
     student = db.execute(
-        "SELECT id, name FROM students WHERE id = ?",
+        "SELECT id, name, class_id FROM students WHERE id = ?",
         (student_id,)
     ).fetchone()
     if student is None:
+        db.close()
+        return False
+    
+    # Only mark attendance if student belongs to the active class
+    if target_class_id is not None and student["class_id"] != target_class_id:
         db.close()
         return False
 
@@ -45,6 +51,7 @@ def mark_student_present(student_id, student_name='', class_id=None, session_id=
         db.close()
         return True
 
+    # Only update existing session_attendance rows (don't insert new ones for wrong class)
     if existing is None:
         db.execute(
             "INSERT INTO session_attendance "
