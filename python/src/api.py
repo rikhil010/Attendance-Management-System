@@ -30,6 +30,9 @@ from registration import (
 )
 from connection import get_connection
 from cloud_sync import get_cloud
+from wifi_manager import (
+    get_current_ssid, connect_to_hotspot, get_ip_for_current_network, auto_sync_ip
+)
 
 # Try to import BLE functionality, but don't fail if bleak is not installed
 try:
@@ -62,10 +65,14 @@ def setup_routes(app):
     def network_settings():
         cfg = get_config()
         if request.method == 'GET':
+            # Auto-sync IP based on current WiFi
+            sync_result = auto_sync_ip()
             return jsonify({
                 'esp32_ip': cfg.get("esp32_ip"),
                 'esp32_use_mdns': cfg.get("esp32_use_mdns"),
-                'last_working_host': get_last_working_host() or ""
+                'last_working_host': get_last_working_host() or "",
+                'current_ssid': sync_result.get("ssid", ""),
+                'mode': sync_result.get("mode", "online")
             })
 
         esp32_ip = request.form.get('esp32_ip', '').strip()
@@ -75,8 +82,11 @@ def setup_routes(app):
             return jsonify({'status': 'error', 'message': 'ESP32 IP cannot be empty'}), 400
 
         cfg.set("esp32_ip", esp32_ip)
+        # Save as router IP if not the hotspot IP
+        if esp32_ip != "192.168.4.1":
+            cfg.set("router_esp32_ip", esp32_ip)
         cfg.set("esp32_use_mdns", "1" if esp32_use_mdns == "1" else "0")
-        set_last_working_host(None)
+        set_last_working_host(esp32_ip)
         return jsonify({'status': 'success'})
 
     @app.route('/api/network/discover', methods=['GET'])
@@ -128,6 +138,44 @@ def setup_routes(app):
     def ble_status():
         """Get BLE module status."""
         return jsonify(get_ble_status())
+
+    @app.route('/api/network/offline_mode', methods=['POST'])
+    def offline_mode():
+        """Connect laptop WiFi to ESP32 hotspot and switch IP."""
+        import threading
+
+        def do_connect():
+            pass  # Connection happens below
+
+        success = connect_to_hotspot()
+        if success:
+            cfg = get_config()
+            cfg.set("esp32_ip", "192.168.4.1")
+            set_last_working_host("192.168.4.1")
+            return jsonify({
+                'status': 'success',
+                'message': 'Connected to ESP32 hotspot',
+                'esp32_ip': '192.168.4.1',
+                'ssid': 'GWASOAT-Device'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'Failed to connect to GWASOAT-Device hotspot. '
+                           'Make sure ESP32 is powered on and in range.'
+            }), 500
+
+    @app.route('/api/network/sync_ip', methods=['GET'])
+    def sync_ip():
+        """Auto-detect WiFi and sync ESP32 IP accordingly."""
+        result = auto_sync_ip()
+        return jsonify({
+            'status': 'success',
+            'ssid': result['ssid'],
+            'esp32_ip': result['esp32_ip'],
+            'changed': result['changed'],
+            'mode': result['mode']
+        })
 
     @app.route('/api/classes', methods=['GET', 'POST'])
     def classes():

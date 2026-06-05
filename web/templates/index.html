@@ -211,6 +211,16 @@
         function loadNetworkSettings() {
             $.get('/api/network', function(data) {
                 $('#esp32Ip').val(data.esp32_ip || '');
+                // Show connection mode indicator
+                if (data.current_ssid) {
+                    const modeText = data.mode === 'offline' 
+                        ? '🔶 Offline (' + data.current_ssid + ')' 
+                        : '🟢 Online (' + data.current_ssid + ')';
+                    if ($('#connectionMode').length === 0) {
+                        $('#esp32Ip').after('<small id="connectionMode" class="text-muted ms-2"></small>');
+                    }
+                    $('#connectionMode').html(modeText);
+                }
             });
         }
 
@@ -699,15 +709,23 @@
         $('#saveNetwork').click(saveNetworkSettings);
         $('#detectNetwork').click(detectNetworkSettings);
         $('#offlineMode').click(function() {
-            $('#esp32Ip').val('192.168.4.1');
-            $.post('/api/network', { esp32_ip: '192.168.4.1', esp32_use_mdns: 0 }, function(resp) {
+            if (!confirm('Switch to Offline Mode?\n\nThis will connect your laptop to the ESP32 hotspot (GWASOAT-Device).\nYou will lose internet access while in this mode.')) {
+                return;
+            }
+            $('#offlineMode').prop('disabled', true).text('Connecting...');
+            $.post('/api/network/offline_mode', function(resp) {
                 if (resp.status === 'success') {
-                    alert('Offline Mode enabled!\n\nConnect your laptop WiFi to:\nNetwork: GWASOAT-Device\nPassword: Attend1234\n\nESP32 IP set to 192.168.4.1');
+                    $('#esp32Ip').val(resp.esp32_ip);
+                    alert('Offline Mode active!\nConnected to ' + resp.ssid + '\nESP32 IP: ' + resp.esp32_ip);
+                    loadNetworkSettings();
                 } else {
-                    alert('Failed to save settings');
+                    alert('Failed: ' + (resp.message || 'Unknown error'));
                 }
-            }).fail(function() {
-                alert('Offline Mode enabled!\n\nConnect your laptop WiFi to:\nNetwork: GWASOAT-Device\nPassword: Attend1234\n\nESP32 IP set to 192.168.4.1');
+            }).fail(function(xhr) {
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Connection failed';
+                alert('Error: ' + msg);
+            }).always(function() {
+                $('#offlineMode').prop('disabled', false).text('Offline Mode');
             });
         });
         $('#deleteSession').click(function() {
@@ -848,6 +866,17 @@
         $(function() {
             loadNetworkSettings();
             loadClasses();
+
+            // Auto-sync IP every 10 seconds based on current WiFi
+            setInterval(function() {
+                $.get('/api/network/sync_ip', function(data) {
+                    if (data.changed) {
+                        $('#esp32Ip').val(data.esp32_ip);
+                        loadNetworkSettings();
+                        console.log('IP auto-synced to ' + data.esp32_ip + ' (' + data.ssid + ')');
+                    }
+                });
+            }, 10000);
         });
     </script>
 </body>
