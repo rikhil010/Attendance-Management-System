@@ -74,7 +74,7 @@
                     <div class="d-flex gap-2 flex-wrap">
                         <button class="btn btn-outline-primary btn-sm" id="saveNetwork">Save Network</button>
                         <button class="btn btn-outline-success btn-sm" id="detectNetwork">Detect ESP32</button>
-                        <button class="btn btn-outline-warning btn-sm" id="offlineMode">Offline Mode</button>
+                        <button class="btn btn-outline-info btn-sm" id="checkWifi">Check WiFi</button>
                     </div>
                 </div>
                 <button class="btn btn-primary btn-sm mb-3" data-bs-toggle="modal" data-bs-target="#addClassModal">Add Class</button>
@@ -708,24 +708,53 @@
         $('#exportCsv').click(exportCsv);
         $('#saveNetwork').click(saveNetworkSettings);
         $('#detectNetwork').click(detectNetworkSettings);
-        $('#offlineMode').click(function() {
-            if (!confirm('Switch to Offline Mode?\n\nThis will connect your laptop to the ESP32 hotspot (GWASOAT-Device).\nYou will lose internet access while in this mode.')) {
-                return;
-            }
-            $('#offlineMode').prop('disabled', true).text('Connecting...');
-            $.post('/api/network/offline_mode', function(resp) {
-                if (resp.status === 'success') {
-                    $('#esp32Ip').val(resp.esp32_ip);
-                    alert('Offline Mode active!\nConnected to ' + resp.ssid + '\nESP32 IP: ' + resp.esp32_ip);
+        $('#checkWifi').click(function() {
+            $('#checkWifi').prop('disabled', true).text('Checking...');
+            $.get('/api/network/sync_ip', function(data) {
+                let msg = 'WiFi: ' + data.ssid + '\nESP32 IP: ' + data.esp32_ip + '\nMode: ' + data.mode;
+                if (data.changed) {
+                    msg += '\n\n✓ IP updated automatically.';
+                    $('#esp32Ip').val(data.esp32_ip);
                     loadNetworkSettings();
-                } else {
-                    alert('Failed: ' + (resp.message || 'Unknown error'));
                 }
-            }).fail(function(xhr) {
-                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Connection failed';
-                alert('Error: ' + msg);
+                // Test if ESP32 is reachable
+                $.get('/api/network/discover', function(resp) {
+                    if (resp.status === 'success') {
+                        alert(msg + '\n\n✓ ESP32 connected at ' + resp.esp32_ip);
+                    } else {
+                        if (confirm(msg + '\n\n✗ ESP32 not reachable on current WiFi.\n\nSwitch to ESP32 hotspot (offline mode)?')) {
+                            $.post('/api/network/offline_mode', function(resp2) {
+                                if (resp2.status === 'success') {
+                                    $('#esp32Ip').val(resp2.esp32_ip);
+                                    loadNetworkSettings();
+                                    alert('Connected to ESP32 hotspot!\nIP: ' + resp2.esp32_ip);
+                                } else {
+                                    alert('Failed to connect to hotspot: ' + (resp2.message || ''));
+                                }
+                            }).fail(function(xhr) {
+                                alert('Hotspot connection failed.\nManually connect WiFi to: GWASOAT-Device\nPassword: Attend1234');
+                            });
+                        }
+                    }
+                }).fail(function() {
+                    if (confirm(msg + '\n\n✗ ESP32 not reachable.\n\nSwitch to ESP32 hotspot (offline mode)?')) {
+                        $.post('/api/network/offline_mode', function(resp2) {
+                            if (resp2.status === 'success') {
+                                $('#esp32Ip').val(resp2.esp32_ip);
+                                loadNetworkSettings();
+                                alert('Connected to ESP32 hotspot!\nIP: ' + resp2.esp32_ip);
+                            } else {
+                                alert('Failed. Manually connect to: GWASOAT-Device / Attend1234');
+                            }
+                        }).fail(function() {
+                            alert('Failed. Manually connect WiFi to:\nNetwork: GWASOAT-Device\nPassword: Attend1234');
+                        });
+                    }
+                });
+            }).fail(function() {
+                alert('Cannot check WiFi status.');
             }).always(function() {
-                $('#offlineMode').prop('disabled', false).text('Offline Mode');
+                $('#checkWifi').prop('disabled', false).text('Check WiFi');
             });
         });
         $('#deleteSession').click(function() {
