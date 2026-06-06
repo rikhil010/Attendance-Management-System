@@ -193,73 +193,33 @@ def load_class_to_device(class_id):
 def start_attendance_session(class_id):
     """
     Start attendance session for a class.
-    Downloads templates from cloud → pushes to ESP32 → starts scanning.
+    Always starts a new session (closes any previous open session).
     """
     global active_class_id, active_session_id, attendance_session_started_at
 
     from network import set_last_working_host, get_last_working_host, discover_esp32_host
 
     db = get_db()
-    resolved_class_id, resolved_session_id = _resolve_active_session(
-        active_class_id, active_session_id)
 
-    # If attendance already active for this class, return current session
-    if resolved_session_id is not None and resolved_class_id == class_id:
-        existing = db.execute(
-            "SELECT id, started_at FROM attendance_sessions "
-            "WHERE id = ? AND ended_at IS NULL",
-            (resolved_session_id,)
-        ).fetchone()
-        if existing is not None:
-            conn = get_connection()
-            class_name_row = db.execute("SELECT name FROM classes WHERE id = ?", (class_id,)).fetchone()
-            c_name = class_name_row["name"] if class_name_row else str(class_id)
-            conn.send_command({"cmd": "start_attendance", "class_name": c_name}, timeout=6.0)
-            db.close()
-            return {
-                'status': 'success',
-                'class_id': class_id,
-                'session_id': int(existing['id']),
-                'session_time': existing['started_at']
-            }
-
-    # Close old session if switching classes
-    if (resolved_session_id is not None and resolved_class_id is not None
-            and resolved_class_id != class_id):
-        closed_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Close any existing open session first
+    open_sessions = db.execute(
+        "SELECT id FROM attendance_sessions WHERE class_id = ? AND ended_at IS NULL",
+        (class_id,)
+    ).fetchall()
+    for sess in open_sessions:
         db.execute(
-            "UPDATE session_attendance SET status = 'Absent' "
-            "WHERE session_id = ? AND status = '--'",
-            (resolved_session_id,)
+            "UPDATE session_attendance SET status = 'Absent' WHERE session_id = ? AND status = '--'",
+            (sess["id"],)
         )
         db.execute(
             "UPDATE attendance_sessions SET ended_at = ? WHERE id = ?",
-            (closed_at, resolved_session_id)
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sess["id"])
         )
+    db.commit()
 
-    # Load class templates to device (cloud → ESP32)
-    load_result = load_class_to_device(class_id)
-    if load_result.get("status") == "error":
-        # Still try to start - maybe templates are already on device
-        print(f"[REG] Warning: class load failed: {load_result.get('message')}")
-
-    # Get class name for OLED display
-    class_name_row = db.execute("SELECT name FROM classes WHERE id = ?", (class_id,)).fetchone()
-    class_name = class_name_row["name"] if class_name_row else str(class_id)
-
-    # Clear device attendance buffer (uses ConnectionManager with BLE fallback)
-    conn = get_connection()
-    conn.send_command({"cmd": "clear_attendance"}, timeout=3.0)
-
-    # Start attendance on ESP32 (uses ConnectionManager with BLE fallback)
-    result = conn.send_command({"cmd": "start_attendance", "class_name": class_name}, timeout=8.0)
-    if result is None:
-        db.close()
-        return {'status': 'error', 'message': 'Cannot connect to ESP32 (WiFi and BLE both failed).'}, 502
-
-    if result.get("status") != "success":
-        db.close()
-        return {'status': 'error', 'message': result.get('message', 'Start failed')}, 500
+    # Start attendance on ESP32 (non-blocking, don't fail if unreachable)
+    esp32_request('/clear_attendance', timeout=3)
+    esp32_request('/start_attendance', timeout=5)
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = db.execute(

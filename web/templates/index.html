@@ -426,9 +426,9 @@
             $.get('/api/students', { class_id: currentClassId }, function(data) {
                 $('#studentList').empty();
                 data.forEach(student => {
-                    const registerButton = student.registered == 1
-                        ? '<button class="btn btn-sm btn-secondary" disabled>Registered</button>'
-                        : `<button class="btn btn-sm btn-success" onclick='registerFingerprint(${student.id}, ${JSON.stringify(student.name)})'>Register</button>`;
+                    const regLabel = student.registered == 1 ? 'Re-Register' : 'Register';
+                    const regClass = student.registered == 1 ? 'btn-outline-success' : 'btn-success';
+                    const registerButton = `<button class="btn btn-sm ${regClass}" onclick='registerFingerprint(${student.id}, ${JSON.stringify(student.name)})'>${regLabel}</button>`;
                     $('#studentList').append(`<li class="list-group-item d-flex justify-content-between align-items-center">
                         ${student.name} (ID: ${student.id})
                         <div>

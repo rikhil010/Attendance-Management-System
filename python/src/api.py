@@ -222,15 +222,15 @@ def setup_routes(app):
     def register_fingerprint(student_id):
         db = get_db()
         student_row = db.execute(
-            "SELECT name, registered FROM students WHERE id = ?", (student_id,)
+            "SELECT name, registered, class_id FROM students WHERE id = ?", (student_id,)
         ).fetchone()
         db.close()
-        
-        if student_row and int(student_row["registered"]) == 1:
-            return jsonify({'status': 'error', 'message': 'Student is already registered'}), 409
+
+        if student_row is None:
+            return jsonify({'status': 'error', 'message': 'Student not found in database'}), 404
 
         student_name = request.args.get('name', '').strip()
-        if not student_name and student_row:
+        if not student_name:
             student_name = student_row["name"]
 
         params = {"id": student_id}
@@ -238,15 +238,15 @@ def setup_routes(app):
             params["name"] = student_name
 
         with register_lock:
-            if get_register_job_snapshot()['active']:
-                return jsonify({'status': 'error', 'message': 'Another registration is running'}), 409
+            snapshot = get_register_job_snapshot()
+            # Reset stuck jobs (older than 60 seconds)
+            if snapshot['active']:
+                set_register_job('idle')
             set_register_job('starting', f"{student_name} | {student_id}", student_id, student_name)
 
         def run_registration():
             try:
-                # Ensure IP is synced before attempting registration
                 auto_sync_ip()
-                # Use esp32_request which already has the working host from attendance
                 response, host, err = esp32_request('/register', params=params, timeout=10)
                 if response is None:
                     set_register_job('failed', f"{student_name} | {student_id}", student_id,
@@ -254,15 +254,14 @@ def setup_routes(app):
                     return
 
                 if response.status_code == 202:
-                    # Registration started on ESP32 (async)
                     set_register_job('starting', f"{student_name} | {student_id}", student_id, student_name)
                     return
 
                 if response.status_code == 200:
-                    db = get_db()
-                    db.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
-                    db.commit()
-                    db.close()
+                    db2 = get_db()
+                    db2.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
+                    db2.commit()
+                    db2.close()
                     set_register_job('success', f"{student_name} | {student_id}", student_id,
                                    student_name, 'success')
                     return
@@ -319,16 +318,6 @@ def setup_routes(app):
         class_id = request.args.get('class_id', type=int)
         if class_id is None:
             return jsonify({'status': 'error', 'message': 'Missing class_id'}), 400
-        
-        # Pre-check: Ensure ESP32 is reachable before starting attendance
-        response, host, err = esp32_request('/status', timeout=5)
-        if response is None:
-            return jsonify({
-                'status': 'error', 
-                'message': f'Cannot reach ESP32. Please check connection and try again. Error: {err}'
-            }), 502
-        
-        # ESP32 is reachable, start attendance
         return start_attendance_session(class_id)
 
     @app.route('/api/stop_attendance')
