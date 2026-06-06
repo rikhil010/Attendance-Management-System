@@ -246,13 +246,15 @@ def setup_routes(app):
             try:
                 # Ensure IP is synced before attempting registration
                 auto_sync_ip()
-                response, host, err = esp32_request('/register', params=params, timeout=120)
+                # Use esp32_request which already has the working host from attendance
+                response, host, err = esp32_request('/register', params=params, timeout=10)
                 if response is None:
-                    set_register_job('failed', f"{student_name} | {student_id}", student_id, 
-                                   student_name, 'failed', f'Timeout. {err}')
+                    set_register_job('failed', f"{student_name} | {student_id}", student_id,
+                                   student_name, 'failed', f'Cannot reach ESP32. {err}')
                     return
 
                 if response.status_code == 202:
+                    # Registration started on ESP32 (async)
                     set_register_job('starting', f"{student_name} | {student_id}", student_id, student_name)
                     return
 
@@ -261,20 +263,14 @@ def setup_routes(app):
                     db.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
                     db.commit()
                     db.close()
-                    # Extract template from ESP32 and upload to cloud
-                    class_id_for_reg = request.args.get('class_id', type=int) or 0
-                    try:
-                        extract_and_upload_template(student_id, student_name, class_id_for_reg)
-                    except Exception as cloud_err:
-                        print(f"[REG] Cloud upload warning: {cloud_err}")
-                    set_register_job('success', f"{student_name} | {student_id}", student_id, 
+                    set_register_job('success', f"{student_name} | {student_id}", student_id,
                                    student_name, 'success')
                     return
 
-                set_register_job('failed', f"{student_name} | {student_id}", student_id, 
-                               student_name, 'failed', response.text)
+                set_register_job('failed', f"{student_name} | {student_id}", student_id,
+                               student_name, 'failed', f'ESP32 returned {response.status_code}: {response.text}')
             except Exception as ex:
-                set_register_job('failed', f"{student_name} | {student_id}", student_id, 
+                set_register_job('failed', f"{student_name} | {student_id}", student_id,
                                student_name, 'failed', str(ex))
 
         threading.Thread(target=run_registration, daemon=True).start()
@@ -283,15 +279,17 @@ def setup_routes(app):
     @app.route('/api/register_status', methods=['GET'])
     def register_status():
         job_snapshot = get_register_job_snapshot()
-        response, host, err = esp32_request('/register_status', timeout=2)
+        
+        # Get ESP32 registration state using the same path that works for attendance
         esp32_state = {}
+        response, host, err = esp32_request('/register_status', timeout=2)
         if response is not None and response.status_code == 200:
             try:
                 esp32_state = response.json()
             except ValueError:
                 pass
 
-        esp_state = esp32_state.get('state', '') if isinstance(esp32_state, dict) else ''
+        esp_state = esp32_state.get('state', '')
         if job_snapshot.get('active') and esp_state in ('success', 'failed'):
             if esp_state == 'success':
                 db = get_db()
@@ -303,7 +301,7 @@ def setup_routes(app):
                 set_register_job('success', job_snapshot.get('detail', ''), sid,
                                job_snapshot.get('student_name', ''), 'success')
             else:
-                esp_detail = str(esp32_state.get('detail', '')).strip() if isinstance(esp32_state, dict) else ''
+                esp_detail = str(esp32_state.get('detail', '')).strip()
                 final_error = esp_detail if esp_detail else 'ESP32 reported failure'
                 set_register_job('failed', job_snapshot.get('detail', ''),
                                job_snapshot.get('student_id'), job_snapshot.get('student_name', ''),
@@ -313,9 +311,7 @@ def setup_routes(app):
         return jsonify({
             'status': 'success',
             'job': job_snapshot,
-            'esp32_host': host or '',
             'esp32_state': esp32_state,
-            'error': err or ''
         })
 
     @app.route('/api/start_attendance')

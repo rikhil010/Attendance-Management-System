@@ -302,7 +302,16 @@ void enrollTask(void* param) {
     
     // First scan
     setRegisterState("waiting_1st", name);
-    displayMessage("Place Finger", "1st scan");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("Register: " + name.substring(0, 12));
+    display.setCursor(0, 18);
+    display.setTextSize(2);
+    display.println("PLACE");
+    display.println("FINGER");
+    display.display();
     if (!fp.waitForFinger(15000)) {
         setRegisterState("failed", "No finger detected");
         displayMessage("Scan Failed");
@@ -336,7 +345,16 @@ void enrollTask(void* param) {
     
     // Remove finger
     setRegisterState("remove_finger", name);
-    displayMessage("Remove Finger");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("Register: " + name.substring(0, 12));
+    display.setCursor(0, 18);
+    display.setTextSize(2);
+    display.println("REMOVE");
+    display.println("FINGER");
+    display.display();
     if (!fp.waitForRemoval(10000)) {
         setRegisterState("failed", "Remove timeout");
         registerTaskHandle = nullptr;
@@ -347,7 +365,16 @@ void enrollTask(void* param) {
     
     // Second scan
     setRegisterState("waiting_2nd", name);
-    displayMessage("Place Again", "2nd scan");
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("Register: " + name.substring(0, 12));
+    display.setCursor(0, 18);
+    display.setTextSize(2);
+    display.println("PLACE");
+    display.println("AGAIN");
+    display.display();
     if (!fp.waitForFinger(15000)) {
         setRegisterState("failed", "No finger on 2nd scan");
         displayMessage("Scan Failed");
@@ -499,6 +526,20 @@ void processCommand(const String& jsonCmd, String& response) {
             registerTargetId = id;
             registerTargetName = name;
             loadedClassId = classId;
+            // Show registration mode immediately on OLED
+            display.clearDisplay();
+            display.setTextColor(SSD1306_WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);
+            display.println("=== REGISTRATION ===");
+            display.setCursor(0, 16);
+            display.println("Student: " + name.substring(0, 14));
+            display.setCursor(0, 30);
+            display.println("ID: " + String(id));
+            display.setCursor(0, 46);
+            display.println("Starting...");
+            display.display();
+            
             xTaskCreatePinnedToCore(enrollTask, "enroll", 8192, nullptr, 1, &registerTaskHandle, 0);
             resp["status"] = "started";
             resp["student_id"] = id;

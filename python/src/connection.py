@@ -208,26 +208,17 @@ class ConnectionManager:
         Tries WiFi first, falls back to BLE.
         """
         with self._lock:
-            # Try WiFi first
-            if self.wifi_host and self.wifi_healthy:
-                result = self._wifi_request(
-                    "/command", method="POST", json_data=cmd, timeout=timeout
-                )
-                if result is not None:
-                    self.mode = "wifi"
-                    return result
+            # Auto-resolve wifi_host from config if not set
+            if not self.wifi_host:
+                try:
+                    from config import get_config
+                    cfg_ip = get_config().get("esp32_ip", "").strip()
+                    if cfg_ip:
+                        self.wifi_host = cfg_ip
+                except Exception:
+                    pass
 
-            # WiFi failed - try BLE
-            if BLE_AVAILABLE:
-                if not self.ble_connected:
-                    self.connect_ble()
-                if self.ble_connected:
-                    result = self._run_async(self._ble_send_command(cmd))
-                    if result is not None:
-                        self.mode = "ble"
-                        return result
-
-            # Last resort: try WiFi without health check
+            # Try WiFi first (even if not marked healthy — just try)
             if self.wifi_host:
                 result = self._wifi_request(
                     "/command", method="POST", json_data=cmd, timeout=timeout
@@ -235,6 +226,13 @@ class ConnectionManager:
                 if result is not None:
                     self.mode = "wifi"
                     self.wifi_healthy = True
+                    return result
+
+            # WiFi failed - try BLE only if available and BT is on
+            if BLE_AVAILABLE and self.ble_connected:
+                result = self._run_async(self._ble_send_command(cmd))
+                if result is not None:
+                    self.mode = "ble"
                     return result
 
             return None
