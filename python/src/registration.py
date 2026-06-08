@@ -256,11 +256,9 @@ def start_attendance_session(class_id):
     db.close()
     return {
         'status': 'success',
-        'esp32_host': host,
         'class_id': class_id,
         'session_id': active_session_id,
-        'session_time': attendance_session_started_at,
-        'templates_loaded': load_result.get('loaded', 0)
+        'session_time': attendance_session_started_at
     }
 
 
