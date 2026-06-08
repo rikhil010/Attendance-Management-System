@@ -321,10 +321,15 @@ void enrollTask(void* param) {
         return;
     }
     
-    delay(300);
-    if (!fp.img2Tz(1)) {
+    delay(500);
+    bool feat1 = false;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (fp.img2Tz(1)) { feat1 = true; break; }
+        delay(500);
+    }
+    if (!feat1) {
         setRegisterState("failed", "Feature extraction failed");
-        displayMessage("Feature Fail");
+        displayMessage("Feature Fail", "Try again");
         holdDisplayFor(2000);
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
@@ -384,10 +389,15 @@ void enrollTask(void* param) {
         return;
     }
     
-    delay(300);
-    if (!fp.img2Tz(2)) {
+    delay(500);
+    bool feat2 = false;
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (fp.img2Tz(2)) { feat2 = true; break; }
+        delay(500);
+    }
+    if (!feat2) {
         setRegisterState("failed", "Feature extraction failed (2nd)");
-        displayMessage("Feature Fail");
+        displayMessage("Feature Fail", "Try again");
         holdDisplayFor(2000);
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
