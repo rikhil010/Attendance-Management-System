@@ -246,7 +246,6 @@ def setup_routes(app):
 
         def run_registration():
             try:
-                auto_sync_ip()
                 response, host, err = esp32_request('/register', params=params, timeout=10)
                 if response is None:
                     set_register_job('failed', f"{student_name} | {student_id}", student_id,
@@ -254,6 +253,7 @@ def setup_routes(app):
                     return
 
                 if response.status_code == 202:
+                    # ESP32 accepted - registration running async on device
                     set_register_job('starting', f"{student_name} | {student_id}", student_id, student_name)
                     return
 
