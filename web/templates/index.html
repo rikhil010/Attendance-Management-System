@@ -70,7 +70,8 @@
                 <h4 class="mb-4">Classes</h4>
                 <div class="card p-2 mb-3">
                     <label class="form-label mb-1" for="esp32Ip">ESP32 IP</label>
-                    <input type="text" class="form-control form-control-sm mb-2" id="esp32Ip" placeholder="192.168.x.x">
+                    <input type="text" class="form-control form-control-sm mb-1" id="esp32Ip" placeholder="192.168.x.x">
+                    <div id="deviceStatus" class="small mb-2 text-muted">Checking...</div>
                     <div class="d-flex gap-2 flex-wrap">
                         <button class="btn btn-outline-primary btn-sm" id="saveNetwork">Save Network</button>
                         <button class="btn btn-outline-success btn-sm" id="detectNetwork">Detect ESP32</button>
@@ -227,32 +228,61 @@
         function saveNetworkSettings() {
             const esp32Ip = $('#esp32Ip').val().trim();
             if (!esp32Ip) {
-                alert('Enter ESP32 IP');
+                showStatus('Enter ESP32 IP', 'warning');
                 return;
             }
             $.post('/api/network', { esp32_ip: esp32Ip, esp32_use_mdns: 0 }, function(resp) {
                 if (resp.status === 'success') {
-                    alert('Network settings saved');
+                    showStatus('Network settings saved', 'success');
                 } else {
-                    alert('Error: ' + (resp.message || 'Failed to save network settings'));
+                    showStatus(resp.message || 'Failed to save', 'danger');
                 }
             }).fail(function(xhr) {
-                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to save network settings';
-                alert('Error: ' + msg);
+                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to save';
+                showStatus(msg, 'danger');
             });
         }
 
         function detectNetworkSettings() {
+            showStatus('Scanning network for ESP32...', 'info');
             $.get('/api/network/discover', function(resp) {
                 if (resp.status === 'success' && resp.esp32_ip) {
                     $('#esp32Ip').val(resp.esp32_ip);
-                    alert('ESP32 detected at ' + resp.esp32_ip);
+                    showStatus('ESP32 found at ' + resp.esp32_ip, 'success');
                 } else {
-                    alert('Error: ' + (resp.message || 'ESP32 not found'));
+                    showStatus('ESP32 not found on network', 'warning');
                 }
             }).fail(function(xhr) {
-                const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'ESP32 not found on current network';
-                alert('Error: ' + msg);
+                showStatus('ESP32 not found on network', 'warning');
+            });
+        }
+
+        function updateDeviceStatus() {
+            $.get('/api/network/sync_ip', function(data) {
+                if (data.changed) {
+                    $('#esp32Ip').val(data.esp32_ip);
+                }
+                let statusHtml = '';
+                const icon = data.mode === 'offline' ? '🔶' : '🟢';
+                statusHtml = icon + ' ' + data.ssid;
+                
+                // Ping ESP32 to check if actually reachable
+                $.get('/api/device/status', function(devResp) {
+                    if (devResp && devResp.status === 'success') {
+                        statusHtml += ' | <span class="text-success">ESP32 Connected</span>';
+                        if (devResp.attendance_mode) {
+                            statusHtml += ' | 📋 Attendance Active';
+                        }
+                    } else {
+                        statusHtml += ' | <span class="text-danger">ESP32 Offline</span>';
+                    }
+                    $('#deviceStatus').html(statusHtml);
+                }).fail(function() {
+                    statusHtml += ' | <span class="text-danger">ESP32 Offline</span>';
+                    $('#deviceStatus').html(statusHtml);
+                });
+            }).fail(function() {
+                $('#deviceStatus').html('<span class="text-danger">Cannot check status</span>');
             });
         }
 
@@ -450,7 +480,7 @@
             $('#stopAttendance').show();
             $.get('/api/start_attendance', { class_id: currentClassId }, function(data) {
                 if (data.status !== 'success') {
-                    alert('Error: ' + (data.message || 'Failed to start attendance'));
+                    showStatus('Failed to start attendance: ' + (data.message || 'Unknown error'), 'danger');
                     $('#stopAttendance').hide();
                     $('#startAttendance').show();
                     return;
@@ -472,7 +502,7 @@
                 }, 1200);
             }).fail(function(xhr) {
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Failed to start attendance';
-                alert('Error: ' + msg);
+                showStatus(msg, 'danger');
                 $('#stopAttendance').hide();
                 $('#startAttendance').show();
             });
@@ -721,49 +751,23 @@
         $('#detectNetwork').click(detectNetworkSettings);
         $('#checkWifi').click(function() {
             $('#checkWifi').prop('disabled', true).text('Checking...');
+            showStatus('Checking WiFi and ESP32 connection...', 'info');
             $.get('/api/network/sync_ip', function(data) {
-                let msg = 'WiFi: ' + data.ssid + '\nESP32 IP: ' + data.esp32_ip + '\nMode: ' + data.mode;
                 if (data.changed) {
-                    msg += '\n\n✓ IP updated automatically.';
                     $('#esp32Ip').val(data.esp32_ip);
-                    loadNetworkSettings();
                 }
                 // Test if ESP32 is reachable
-                $.get('/api/network/discover', function(resp) {
-                    if (resp.status === 'success') {
-                        alert(msg + '\n\n✓ ESP32 connected at ' + resp.esp32_ip);
+                $.get('/api/device/status', function(resp) {
+                    if (resp && resp.status === 'success') {
+                        showStatus('✓ Connected | WiFi: ' + data.ssid + ' | ESP32: ' + data.esp32_ip, 'success');
                     } else {
-                        if (confirm(msg + '\n\n✗ ESP32 not reachable on current WiFi.\n\nSwitch to ESP32 hotspot (offline mode)?')) {
-                            $.post('/api/network/offline_mode', function(resp2) {
-                                if (resp2.status === 'success') {
-                                    $('#esp32Ip').val(resp2.esp32_ip);
-                                    loadNetworkSettings();
-                                    alert('Connected to ESP32 hotspot!\nIP: ' + resp2.esp32_ip);
-                                } else {
-                                    alert('Failed to connect to hotspot: ' + (resp2.message || ''));
-                                }
-                            }).fail(function(xhr) {
-                                alert('Hotspot connection failed.\nManually connect WiFi to: GWASOAT-Device\nPassword: Attend1234');
-                            });
-                        }
+                        showStatus('✗ ESP32 not reachable. Try: Offline Mode (connect to GWASOAT-Device WiFi, password: Attend1234)', 'warning');
                     }
                 }).fail(function() {
-                    if (confirm(msg + '\n\n✗ ESP32 not reachable.\n\nSwitch to ESP32 hotspot (offline mode)?')) {
-                        $.post('/api/network/offline_mode', function(resp2) {
-                            if (resp2.status === 'success') {
-                                $('#esp32Ip').val(resp2.esp32_ip);
-                                loadNetworkSettings();
-                                alert('Connected to ESP32 hotspot!\nIP: ' + resp2.esp32_ip);
-                            } else {
-                                alert('Failed. Manually connect to: GWASOAT-Device / Attend1234');
-                            }
-                        }).fail(function() {
-                            alert('Failed. Manually connect WiFi to:\nNetwork: GWASOAT-Device\nPassword: Attend1234');
-                        });
-                    }
+                    showStatus('✗ ESP32 offline. Connect to GWASOAT-Device WiFi (password: Attend1234) then set IP to 192.168.4.1', 'warning');
                 });
             }).fail(function() {
-                alert('Cannot check WiFi status.');
+                showStatus('Cannot check WiFi status', 'danger');
             }).always(function() {
                 $('#checkWifi').prop('disabled', false).text('Check WiFi');
             });
@@ -906,17 +910,10 @@
         $(function() {
             loadNetworkSettings();
             loadClasses();
+            updateDeviceStatus();
 
-            // Auto-sync IP every 10 seconds based on current WiFi
-            setInterval(function() {
-                $.get('/api/network/sync_ip', function(data) {
-                    if (data.changed) {
-                        $('#esp32Ip').val(data.esp32_ip);
-                        loadNetworkSettings();
-                        console.log('IP auto-synced to ' + data.esp32_ip + ' (' + data.ssid + ')');
-                    }
-                });
-            }, 10000);
+            // Auto-sync IP and device status every 5 seconds
+            setInterval(updateDeviceStatus, 5000);
         });
     </script>
 </body>

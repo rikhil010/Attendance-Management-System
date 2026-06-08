@@ -1022,6 +1022,8 @@ void setup() {
     
     String ssid = config_manager.getWiFiSSID();
     String password = config_manager.getWiFiPassword();
+    WiFi.setSleep(false);  // Disable WiFi power saving (prevents disconnects)
+    WiFi.setAutoReconnect(true);  // Auto reconnect if dropped
     WiFi.begin(ssid.c_str(), password.c_str());
     
     unsigned long wifiStart = millis();
@@ -1053,9 +1055,9 @@ void setup() {
 
 // ─── Main Loop ──────────────────────────────────────────────
 void loop() {
-    // WiFi auto-reconnect check (every 30 seconds)
+    // WiFi auto-reconnect check (every 10 seconds)
     static unsigned long lastWifiCheck = 0;
-    if (millis() - lastWifiCheck > 30000) {
+    if (millis() - lastWifiCheck > 10000) {
         lastWifiCheck = millis();
         if (WiFi.status() != WL_CONNECTED) {
             sta_connected = false;
