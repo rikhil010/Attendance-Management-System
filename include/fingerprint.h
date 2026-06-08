@@ -117,8 +117,11 @@ public:
         sendPacket(cmd, sizeof(cmd));
         uint8_t resp[12];
         if (readPacket(resp, 12, 3000)) {
+            Serial.print("[FP] img2Tz resp[9]=0x");
+            Serial.println(resp[9], HEX);
             return resp[9] == 0x00;
         }
+        Serial.println("[FP] img2Tz timeout");
         return false;
     }
 

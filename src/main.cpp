@@ -321,16 +321,35 @@ void enrollTask(void* param) {
         return;
     }
     
-    delay(500);
-    bool feat1 = false;
-    for (int attempt = 0; attempt < 3; attempt++) {
-        if (fp.img2Tz(1)) { feat1 = true; break; }
+    // Confirm finger is still there and get a good image
+    delay(800);
+    if (!fp.getImage()) {
         delay(500);
+        if (!fp.getImage()) {
+            setRegisterState("failed", "Lost finger contact");
+            displayMessage("Hold Finger", "Steady!");
+            holdDisplayFor(2000);
+            registerTaskHandle = nullptr;
+            vTaskDelete(nullptr);
+            return;
+        }
+    }
+    
+    delay(200);
+    bool feat1 = false;
+    for (int attempt = 0; attempt < 5; attempt++) {
+        Serial.print("[REG] img2Tz(1) attempt ");
+        Serial.println(attempt + 1);
+        if (fp.img2Tz(1)) { feat1 = true; break; }
+        // Re-capture image and try again
+        delay(300);
+        fp.getImage();
+        delay(300);
     }
     if (!feat1) {
         setRegisterState("failed", "Feature extraction failed");
-        displayMessage("Feature Fail", "Try again");
-        holdDisplayFor(2000);
+        displayMessage("Feature Fail", "Press harder");
+        holdDisplayFor(2500);
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
         return;
@@ -389,16 +408,26 @@ void enrollTask(void* param) {
         return;
     }
     
-    delay(500);
-    bool feat2 = false;
-    for (int attempt = 0; attempt < 3; attempt++) {
-        if (fp.img2Tz(2)) { feat2 = true; break; }
+    delay(800);
+    if (!fp.getImage()) {
         delay(500);
+        fp.getImage();
+    }
+    
+    delay(200);
+    bool feat2 = false;
+    for (int attempt = 0; attempt < 5; attempt++) {
+        Serial.print("[REG] img2Tz(2) attempt ");
+        Serial.println(attempt + 1);
+        if (fp.img2Tz(2)) { feat2 = true; break; }
+        delay(300);
+        fp.getImage();
+        delay(300);
     }
     if (!feat2) {
         setRegisterState("failed", "Feature extraction failed (2nd)");
-        displayMessage("Feature Fail", "Try again");
-        holdDisplayFor(2000);
+        displayMessage("Feature Fail", "Press harder");
+        holdDisplayFor(2500);
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
         return;
