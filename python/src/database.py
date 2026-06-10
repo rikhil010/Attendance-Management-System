@@ -67,6 +67,13 @@ def initialize_database():
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL)''')
     
+    db.execute('''CREATE TABLE IF NOT EXISTS fingerprint_templates (
+                    student_id INTEGER PRIMARY KEY,
+                    class_id INTEGER NOT NULL,
+                    template_data BLOB NOT NULL,
+                    template_size INTEGER NOT NULL,
+                    created_at TEXT NOT NULL)''')
+    
     # Add missing columns
     ensure_column(db, "students", "class_id", "INTEGER")
     ensure_column(db, "students", "registered", "INTEGER NOT NULL DEFAULT 0")

@@ -217,9 +217,53 @@ def start_attendance_session(class_id):
         )
     db.commit()
 
-    # Start attendance on ESP32 (non-blocking, don't fail if unreachable)
+    # Load class templates into ESP32 sensor (temporary cache)
+    import base64
+    
+    # First, clear the sensor
     esp32_request('/clear_attendance', timeout=3)
+    
+    # Get all registered students with templates for this class
+    templates = db.execute(
+        "SELECT ft.student_id, ft.template_data, s.name "
+        "FROM fingerprint_templates ft "
+        "JOIN students s ON s.id = ft.student_id "
+        "WHERE ft.class_id = ? ORDER BY ft.student_id",
+        (class_id,)
+    ).fetchall()
+    
+    loaded_count = 0
+    if templates:
+        print(f"[ATT] Loading {len(templates)} templates to ESP32...")
+        for tpl in templates:
+            sid = tpl["student_id"]
+            name = tpl["name"]
+            b64 = base64.b64encode(tpl["template_data"]).decode()
+            # Upload template to ESP32 via /command POST
+            import requests
+            ip = get_config().get("esp32_ip", "192.168.0.103")
+            try:
+                import json
+                payload = {
+                    "cmd": "upload_template",
+                    "student_id": sid,
+                    "class_id": class_id,
+                    "name": name,
+                    "template": b64
+                }
+                r = requests.post(f"http://{ip}/command", json=payload, timeout=10)
+                if r.status_code == 200:
+                    loaded_count += 1
+                    print(f"[ATT] Loaded template for {name} (ID:{sid})")
+            except Exception as e:
+                print(f"[ATT] Failed to load template for {name}: {e}")
+    
+    # Now load from SD cache on ESP32 (in case templates were saved there)
+    esp32_request('/load_class', params={'class_id': class_id}, timeout=15)
+    
+    # Start attendance mode on ESP32
     esp32_request('/start_attendance', timeout=5)
+    print(f"[ATT] Attendance started, {loaded_count}/{len(templates)} templates loaded")
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = db.execute(
@@ -315,16 +359,20 @@ def stop_attendance_session():
     cfg.set("active_session_id", "")
 
     response, host, err = esp32_request('/stop_attendance')
+    
+    # Clear all fingerprint templates from sensor (it's just a cache)
+    esp32_request('/clear_attendance', timeout=3)
+    # Empty the sensor's fingerprint database
+    import requests
+    ip = get_config().get("esp32_ip", "192.168.0.103")
+    try:
+        payload = {"cmd": "clear_sensor"}
+        requests.post(f"http://{ip}/command", json=payload, timeout=5)
+        print("[ATT] Sensor templates cleared")
+    except Exception:
+        pass
+    
     if response is None:
-        # Try via ConnectionManager (BLE fallback)
-        conn = get_connection()
-        result = conn.send_command({"cmd": "stop_attendance"}, timeout=5.0)
-        if result is None:
-            return {'status': 'error', 'message': 'Cannot connect to ESP32.'}, 502
-        return {'status': 'success'}
+        return {'status': 'error', 'message': 'Cannot connect to ESP32.'}, 502
 
-    if response.status_code == 200:
-        return {'status': 'success', 'esp32_host': host}
-
-    return ({'status': 'error', 'message': response.text,
-             'esp32_host': host}, response.status_code)
+    return {'status': 'success'}

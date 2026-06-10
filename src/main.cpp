@@ -277,6 +277,24 @@ bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
         sdCache.saveTemplate(classId, studentId, data, dataLen);
     }
     
+    // Download template into sensor buffer and store at student ID slot
+    if (fp.downloadTemplate(1, data, dataLen)) {
+        if (fp.store(1, (uint16_t)studentId)) {
+            // Update slot mapping
+            if (studentId < MAX_CLASS_SIZE) {
+                slotToStudent[studentId] = studentId;
+                slotToName[studentId] = name;
+            }
+            loadedStudentCount++;
+            Serial.print("[TPL] Loaded into sensor slot ");
+            Serial.println(studentId);
+        } else {
+            Serial.println("[TPL] store() failed");
+        }
+    } else {
+        Serial.println("[TPL] downloadTemplate() failed");
+    }
+    
     // Update roster
     studentRoster[String(studentId)] = name;
     
@@ -797,6 +815,20 @@ void processCommand(const String& jsonCmd, String& response) {
         resp["ready"] = sdCache.isReady();
         resp["total_mb"] = (int)(sdCache.getTotalBytes() / (1024 * 1024));
         resp["used_mb"] = (int)(sdCache.getUsedBytes() / (1024 * 1024));
+    }
+    else if (cmd == "clear_sensor") {
+        // Wipe all fingerprint templates from sensor (cache cleared)
+        bool ok = fp.emptyDatabase();
+        loadedStudentCount = 0;
+        loadedClassId = -1;
+        loadedClassName = "";
+        for (int i = 0; i < MAX_CLASS_SIZE; i++) {
+            slotToStudent[i] = -1;
+            slotToName[i] = "";
+        }
+        resp["status"] = ok ? "success" : "error";
+        resp["message"] = ok ? "Sensor cleared" : "Failed to clear sensor";
+        Serial.println("[FP] Sensor database cleared");
     }
     else {
         resp["status"] = "error";

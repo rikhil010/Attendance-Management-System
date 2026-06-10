@@ -303,6 +303,36 @@ def setup_routes(app):
                     db = get_db()
                     db.execute("UPDATE students SET registered = 1 WHERE id = ?", (sid,))
                     db.commit()
+                    
+                    # Extract template from ESP32 and save to database
+                    try:
+                        tpl_resp, _, _ = esp32_request('/get_template', params={'id': sid}, timeout=10)
+                        if tpl_resp and tpl_resp.status_code == 200:
+                            tpl_data = tpl_resp.json()
+                            if tpl_data.get('status') == 'success' and tpl_data.get('template'):
+                                import base64
+                                from datetime import datetime
+                                template_bytes = base64.b64decode(tpl_data['template'])
+                                student_row = db.execute(
+                                    "SELECT class_id FROM students WHERE id = ?", (sid,)
+                                ).fetchone()
+                                cid = student_row['class_id'] if student_row else 0
+                                db.execute(
+                                    "INSERT OR REPLACE INTO fingerprint_templates "
+                                    "(student_id, class_id, template_data, template_size, created_at) "
+                                    "VALUES (?, ?, ?, ?, ?)",
+                                    (sid, cid, template_bytes, len(template_bytes),
+                                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                )
+                                db.commit()
+                                print(f"[REG] Template saved: student {sid}, {len(template_bytes)} bytes")
+                                
+                                # Delete from sensor (it's now in the database)
+                                esp32_request('/delete', params={'id': sid}, timeout=5)
+                                print(f"[REG] Template deleted from sensor: student {sid}")
+                    except Exception as e:
+                        print(f"[REG] Template extraction warning: {e}")
+                    
                     db.close()
                 register_job['state'] = 'success'
                 register_job['final_result'] = 'success'
