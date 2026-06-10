@@ -1028,12 +1028,15 @@ void setup() {
     fp.begin(FP_BAUD_RATE, PIN_FP_RX, PIN_FP_TX);
     Serial.println("[FP] Sensor initialized");
     
-    // SD Card
+    // SD Card (may fail if no card inserted - that's OK)
     displayMessage("Init SD Card");
+    Serial.println("[SD] Attempting SD init...");
     if (sdCache.begin()) {
         Serial.println("[SD] Ready");
     } else {
         Serial.println("[SD] Failed - continuing without SD");
+        displayMessage("SD: Not found", "Continuing...");
+        delay(500);
     }
     
     // WiFi (AP + STA)
