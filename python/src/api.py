@@ -256,20 +256,80 @@ def setup_routes(app):
                     register_job['final_result'] = 'failed'
                     register_job['error'] = f'Cannot reach ESP32. {err}'
                     register_job['active'] = False
-                    print(f"[REGISTER] FAILED: {err}")
                     return
 
-                if response.status_code in (200, 202):
-                    # ESP32 accepted - registration running async on device
-                    register_job['state'] = 'starting'
-                    print(f"[REGISTER] ESP32 accepted (status {response.status_code})")
+                if response.status_code not in (200, 202):
+                    register_job['state'] = 'failed'
+                    register_job['final_result'] = 'failed'
+                    register_job['error'] = f'ESP32 returned {response.status_code}'
+                    register_job['active'] = False
                     return
 
+                # ESP32 accepted - now poll until registration completes
+                print(f"[REGISTER] Waiting for ESP32 to finish enrollment...")
+                import time
+                for _ in range(60):  # Poll for up to 60 seconds
+                    time.sleep(1)
+                    resp, _, _ = esp32_request('/register_status', timeout=3)
+                    if resp and resp.status_code == 200:
+                        try:
+                            state_data = resp.json()
+                            esp_state = state_data.get('state', '')
+                            register_job['state'] = esp_state
+                            print(f"[REGISTER] ESP32 state: {esp_state}")
+                            
+                            if esp_state == 'success':
+                                # Registration done! Extract template NOW
+                                print(f"[REGISTER] Success! Extracting template...")
+                                import base64
+                                from datetime import datetime
+                                
+                                db2 = get_db()
+                                db2.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
+                                
+                                tpl_resp, _, _ = esp32_request('/get_template', params={'id': student_id}, timeout=10)
+                                if tpl_resp and tpl_resp.status_code == 200:
+                                    tpl_data = tpl_resp.json()
+                                    if tpl_data.get('status') == 'success' and tpl_data.get('template'):
+                                        template_bytes = base64.b64decode(tpl_data['template'])
+                                        s_row = db2.execute("SELECT class_id FROM students WHERE id = ?", (student_id,)).fetchone()
+                                        cid = s_row['class_id'] if s_row else 0
+                                        db2.execute(
+                                            "INSERT OR REPLACE INTO fingerprint_templates "
+                                            "(student_id, class_id, template_data, template_size, created_at) "
+                                            "VALUES (?, ?, ?, ?, ?)",
+                                            (student_id, cid, template_bytes, len(template_bytes),
+                                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                        )
+                                        print(f"[REGISTER] Template saved: {len(template_bytes)} bytes")
+                                        # Delete from sensor
+                                        esp32_request('/delete', params={'id': student_id}, timeout=5)
+                                        print(f"[REGISTER] Deleted from sensor")
+                                    else:
+                                        print(f"[REGISTER] Template extraction failed: {tpl_data}")
+                                else:
+                                    print(f"[REGISTER] get_template request failed")
+                                
+                                db2.commit()
+                                db2.close()
+                                register_job['final_result'] = 'success'
+                                register_job['active'] = False
+                                return
+                            
+                            elif esp_state == 'failed':
+                                register_job['final_result'] = 'failed'
+                                register_job['error'] = state_data.get('detail', 'Failed')
+                                register_job['active'] = False
+                                return
+                        except ValueError:
+                            pass
+                
+                # Timeout
                 register_job['state'] = 'failed'
                 register_job['final_result'] = 'failed'
-                register_job['error'] = f'ESP32 returned {response.status_code}'
+                register_job['error'] = 'Registration timeout (60s)'
                 register_job['active'] = False
-                print(f"[REGISTER] FAILED: ESP32 status {response.status_code}")
+                
             except Exception as ex:
                 register_job['state'] = 'failed'
                 register_job['final_result'] = 'failed'
