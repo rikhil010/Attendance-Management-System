@@ -51,6 +51,47 @@ private:
         delay(50);
     }
 
+    // Read a single byte with timeout, returns -1 if timeout
+    int waitReadByte(int timeout) {
+        unsigned long start = millis();
+        while (millis() - start < (unsigned long)timeout) {
+            if (serial.available()) return serial.read();
+            delay(1);
+        }
+        return -1;
+    }
+
+    // Read exactly n bytes into buf, returns true if all read
+    bool readExact(uint8_t* buf, int n, int timeout) {
+        int i = 0;
+        unsigned long start = millis();
+        while (i < n && millis() - start < (unsigned long)timeout) {
+            if (serial.available()) {
+                buf[i++] = serial.read();
+            } else {
+                delay(1);
+            }
+        }
+        return i == n;
+    }
+
+    // Scan the stream until we find packet header 0xEF 0x01
+    bool syncToHeader(int timeout) {
+        unsigned long start = millis();
+        int state = 0;
+        while (millis() - start < (unsigned long)timeout) {
+            if (serial.available()) {
+                uint8_t b = serial.read();
+                if (state == 0 && b == 0xEF) state = 1;
+                else if (state == 1 && b == 0x01) return true;
+                else state = (b == 0xEF) ? 1 : 0;
+            } else {
+                delay(1);
+            }
+        }
+        return false;
+    }
+
     bool readPacket(uint8_t* buffer, int len, int timeout = 1000) {
         int i = 0;
         unsigned long start = millis();
@@ -172,75 +213,103 @@ public:
     }
 
     // Upload template FROM sensor TO host (UpChar)
-    // Returns number of bytes read into templateData, or -1 on failure
+    // Reads the COMPLETE character file via data packets until end packet (0x08)
+    // Returns number of bytes read, or -1 on failure
     int uploadTemplate(uint8_t bufferId, uint8_t* templateData, int maxLen) {
-        // Send UpChar command
+        clearBuffer();
+        // Send UpChar command: cmd=0x08, bufferId
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x08 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x08, bufferId,
                          (uint8_t)(chk >> 8), (uint8_t)(chk & 0xFF)};
-        sendPacket(cmd, sizeof(cmd));
-        
-        // Read ACK
+        serial.write(cmd, sizeof(cmd));
+        serial.flush();
+        delay(20);
+
+        // Read ACK packet (12 bytes)
         uint8_t ack[12];
-        if (!readPacket(ack, 12, 2000)) return -1;
-        if (ack[9] != 0x00) return -1;
-        
-        // Now read data packets until we get an end packet
-        int totalRead = 0;
-        unsigned long start = millis();
-        while (millis() - start < 5000 && totalRead < maxLen) {
-            // Read packet header (9 bytes)
-            uint8_t hdr[9];
-            if (!readPacket(hdr, 9, 2000)) break;
-            
-            uint8_t pktType = hdr[6];
-            uint16_t pktLen = ((uint16_t)hdr[7] << 8) | hdr[8];
-            
-            // Read payload + checksum
-            int dataLen = pktLen - 2;  // subtract 2 for checksum
-            if (dataLen <= 0) break;
-            if (totalRead + dataLen > maxLen) dataLen = maxLen - totalRead;
-            
-            // Read data bytes
-            int bytesRead = 0;
-            unsigned long pktStart = millis();
-            while (bytesRead < dataLen && millis() - pktStart < 2000) {
-                if (serial.available()) {
-                    templateData[totalRead + bytesRead] = serial.read();
-                    bytesRead++;
-                }
-                delay(1);
-            }
-            totalRead += bytesRead;
-            
-            // Read checksum (2 bytes)
-            uint8_t chkBytes[2];
-            readPacket(chkBytes, 2, 500);
-            
-            // End packet means we're done
-            if (pktType == FP_END_PACKET) break;
+        if (!readPacket(ack, 12, 2000)) {
+            Serial.println("[FP] UpChar: no ACK");
+            return -1;
         }
-        
-        Serial.print("[FP] uploadTemplate got ");
+        if (ack[9] != 0x00) {
+            Serial.print("[FP] UpChar: ACK error 0x");
+            Serial.println(ack[9], HEX);
+            return -1;
+        }
+
+        // Read data packets until we get an end packet (id=0x08)
+        int totalRead = 0;
+        int packetCount = 0;
+        unsigned long start = millis();
+
+        while (millis() - start < 6000) {
+            // Sync to packet header: find 0xEF 0x01
+            if (!syncToHeader(2000)) {
+                Serial.println("[FP] UpChar: header sync timeout");
+                break;
+            }
+            // Read remaining header: addr(4) + pid(1) + len(2) = 7 bytes
+            uint8_t hdr[7];
+            if (!readExact(hdr, 7, 2000)) {
+                Serial.println("[FP] UpChar: header read timeout");
+                break;
+            }
+            uint8_t pid = hdr[4];
+            uint16_t pktLen = ((uint16_t)hdr[5] << 8) | hdr[6];
+            int contentLen = pktLen - 2;  // minus 2 checksum bytes
+            if (contentLen <= 0 || contentLen > 256) {
+                Serial.print("[FP] UpChar: bad content len ");
+                Serial.println(contentLen);
+                break;
+            }
+
+            // Read content bytes
+            int toRead = contentLen;
+            if (totalRead + toRead > maxLen) toRead = maxLen - totalRead;
+            if (!readExact(templateData + totalRead, toRead, 3000)) {
+                Serial.println("[FP] UpChar: content read timeout");
+                break;
+            }
+            totalRead += toRead;
+            // Discard any extra content beyond buffer
+            for (int i = toRead; i < contentLen; i++) {
+                waitReadByte(500);
+            }
+            // Read and discard checksum (2 bytes)
+            waitReadByte(500);
+            waitReadByte(500);
+
+            packetCount++;
+            // End packet?
+            if (pid == 0x08) break;
+        }
+
+        Serial.print("[FP] UpChar: got ");
         Serial.print(totalRead);
-        Serial.println(" bytes");
+        Serial.print(" bytes in ");
+        Serial.print(packetCount);
+        Serial.println(" packets");
         return totalRead;
     }
 
     // Download template FROM host TO sensor (DnChar)
+    // Sends complete character file in data packets matching sensor's format
     bool downloadTemplate(uint8_t bufferId, const uint8_t* templateData, int dataLen) {
-        Serial.print("[FP] downloadTemplate buffer=");
+        Serial.print("[FP] DnChar buffer=");
         Serial.print(bufferId);
         Serial.print(" len=");
         Serial.println(dataLen);
-        
-        // Send DnChar command
+
+        clearBuffer();
+        // Send DnChar command: cmd=0x09, bufferId
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x09 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x09, bufferId,
                          (uint8_t)(chk >> 8), (uint8_t)(chk & 0xFF)};
-        sendPacket(cmd, sizeof(cmd));
-        
-        // Read ACK
+        serial.write(cmd, sizeof(cmd));
+        serial.flush();
+        delay(20);
+
+        // Read ACK packet
         uint8_t ack[12];
         if (!readPacket(ack, 12, 2000)) {
             Serial.println("[FP] DnChar: no ACK");
@@ -251,44 +320,41 @@ public:
             Serial.println(ack[9], HEX);
             return false;
         }
-        Serial.println("[FP] DnChar: ACK OK, sending data...");
-        
-        // Send template data in packets (128 bytes per data packet)
+
+        // Send data in packets. Content size 128 bytes per packet.
+        const int CONTENT = 128;
         int offset = 0;
-        int packetSize = 128;
-        
         while (offset < dataLen) {
-            int remaining = dataLen - offset;
-            int chunkLen = (remaining > packetSize) ? packetSize : remaining;
-            bool isLast = (offset + chunkLen >= dataLen);
-            uint8_t pktType = isLast ? FP_END_PACKET : FP_DATA_PACKET;
-            
-            // Packet length = data bytes + 2 (for checksum)
-            uint16_t pktLen = chunkLen + 2;
-            
-            // Calculate checksum: sum of type + length_hi + length_lo + all data bytes
-            uint16_t pktChk = pktType + (uint8_t)(pktLen >> 8) + (uint8_t)(pktLen & 0xFF);
-            for (int i = 0; i < chunkLen; i++) {
-                pktChk += templateData[offset + i];
-            }
-            
-            // Send: header(6) + type(1) + length(2) + data(chunkLen) + checksum(2)
-            uint8_t hdr[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, pktType,
-                            (uint8_t)(pktLen >> 8), (uint8_t)(pktLen & 0xFF)};
+            int chunk = dataLen - offset;
+            if (chunk > CONTENT) chunk = CONTENT;
+            bool isLast = (offset + chunk >= dataLen);
+            uint8_t pid = isLast ? 0x08 : 0x02;
+
+            uint16_t pktLen = chunk + 2;  // content + 2 checksum bytes
+            uint16_t pktChk = pid + (uint8_t)(pktLen >> 8) + (uint8_t)(pktLen & 0xFF);
+
+            // Header: EF 01 FF FF FF FF [pid] [len_hi] [len_lo]
+            uint8_t hdr[9] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, pid,
+                              (uint8_t)(pktLen >> 8), (uint8_t)(pktLen & 0xFF)};
             serial.write(hdr, 9);
-            serial.write(&templateData[offset], chunkLen);
+
+            // Data + accumulate checksum
+            for (int i = 0; i < chunk; i++) {
+                uint8_t b = templateData[offset + i];
+                serial.write(b);
+                pktChk += b;
+            }
+            // Checksum
             serial.write((uint8_t)(pktChk >> 8));
             serial.write((uint8_t)(pktChk & 0xFF));
             serial.flush();
-            
-            offset += chunkLen;
-            delay(10);
+
+            offset += chunk;
+            delay(15);
         }
-        
-        Serial.println("[FP] DnChar: data sent, waiting for confirmation...");
-        delay(100);
-        
-        // Some sensors don't send a final ACK for DnChar, just return true
+
+        delay(150);  // Let sensor process
+        Serial.println("[FP] DnChar: data sent");
         return true;
     }
 

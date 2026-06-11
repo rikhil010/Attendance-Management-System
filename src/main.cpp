@@ -397,7 +397,15 @@ void enrollTask(void* param) {
         return;
     }
     
-    // Store in sensor FIRST (before extraction which may corrupt buffer)
+    // Extract the complete template from buffer 1 (model is here after regModel)
+    delay(300);
+    lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    lastTemplateId = id;
+    Serial.print("[REG] Extracted template: ");
+    Serial.print(lastTemplateLen);
+    Serial.println(" bytes");
+    
+    // Store in sensor (UpChar is non-destructive, buffer 1 still has model)
     setRegisterState("saving_model", name);
     displayMessage("Saving...", String(id));
     bool storeOk = false;
@@ -508,26 +516,7 @@ void enrollTask(void* param) {
     delay(1500);
     fp.waitForRemoval(2000);
     
-    // ─── EXTRACT TEMPLATE for database backup ───────────────
-    delay(200);
-    lastTemplateLen = 0;
-    lastTemplateId = id;
-    if (fp.loadChar(1, id)) {
-        delay(100);
-        lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
-    }
-    if (lastTemplateLen <= 0) {
-        lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
-    }
-    if (lastTemplateLen > 0) {
-        Serial.print("[REG] Template extracted: ");
-        Serial.print(lastTemplateLen);
-        Serial.println(" bytes");
-    } else {
-        Serial.println("[REG] Extraction failed - template stays on sensor only");
-        lastTemplateLen = 0;
-    }
-    
+    // Template already extracted before store (lastTemplate buffer)
     // Update roster AND slot mapping
     studentRoster[String(id)] = name;
     saveStudentRoster();
