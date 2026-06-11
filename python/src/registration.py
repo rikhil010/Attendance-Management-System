@@ -217,12 +217,58 @@ def start_attendance_session(class_id):
         )
     db.commit()
 
-    # Start attendance - use templates already on the sensor
-    # (Templates are stored permanently on sensor during registration)
-    # Database copy is backup only - DnChar upload not reliable yet
+    # Start attendance - load templates from database to sensor
+    import base64
+    
+    templates = db.execute(
+        "SELECT ft.student_id, ft.template_data, s.name "
+        "FROM fingerprint_templates ft "
+        "JOIN students s ON s.id = ft.student_id "
+        "WHERE ft.class_id = ? ORDER BY ft.student_id",
+        (class_id,)
+    ).fetchall()
+    
     esp32_request('/clear_attendance', timeout=3)
+    
+    if templates:
+        # Clear sensor and reload from database
+        import requests as req_lib
+        ip = get_config().get("esp32_ip", "192.168.0.103")
+        try:
+            req_lib.post(f"http://{ip}/command", json={"cmd": "clear_sensor"}, timeout=5)
+        except Exception:
+            pass
+        
+        print(f"[ATT] Loading {len(templates)} templates to ESP32...")
+        loaded = 0
+        for tpl in templates:
+            sid = tpl["student_id"]
+            name = tpl["name"]
+            b64 = base64.b64encode(tpl["template_data"]).decode()
+            try:
+                payload = {
+                    "cmd": "upload_template",
+                    "student_id": sid,
+                    "class_id": class_id,
+                    "name": name,
+                    "template": b64
+                }
+                r = req_lib.post(f"http://{ip}/command", json=payload, timeout=15)
+                if r.status_code == 200:
+                    result = r.json()
+                    if result.get("status") == "success":
+                        loaded += 1
+                        print(f"[ATT] ✓ {name} (ID:{sid})")
+                    else:
+                        print(f"[ATT] ✗ {name}: {result.get('message','')}")
+            except Exception as e:
+                print(f"[ATT] ✗ {name}: {e}")
+        print(f"[ATT] Loaded {loaded}/{len(templates)} templates")
+    else:
+        print(f"[ATT] No templates in DB, using sensor directly")
+    
     esp32_request('/start_attendance', timeout=5)
-    print(f"[ATT] Attendance started (using sensor-stored templates)")
+    print(f"[ATT] Attendance started")
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = db.execute(

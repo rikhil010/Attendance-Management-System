@@ -229,6 +229,11 @@ public:
 
     // Download template FROM host TO sensor (DnChar)
     bool downloadTemplate(uint8_t bufferId, const uint8_t* templateData, int dataLen) {
+        Serial.print("[FP] downloadTemplate buffer=");
+        Serial.print(bufferId);
+        Serial.print(" len=");
+        Serial.println(dataLen);
+        
         // Send DnChar command
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x09 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x09, bufferId,
@@ -237,10 +242,18 @@ public:
         
         // Read ACK
         uint8_t ack[12];
-        if (!readPacket(ack, 12, 2000)) return false;
-        if (ack[9] != 0x00) return false;
+        if (!readPacket(ack, 12, 2000)) {
+            Serial.println("[FP] DnChar: no ACK");
+            return false;
+        }
+        if (ack[9] != 0x00) {
+            Serial.print("[FP] DnChar: ACK error 0x");
+            Serial.println(ack[9], HEX);
+            return false;
+        }
+        Serial.println("[FP] DnChar: ACK OK, sending data...");
         
-        // Send template data in packets (128 bytes per packet)
+        // Send template data in packets (128 bytes per data packet)
         int offset = 0;
         int packetSize = 128;
         
@@ -250,32 +263,32 @@ public:
             bool isLast = (offset + chunkLen >= dataLen);
             uint8_t pktType = isLast ? FP_END_PACKET : FP_DATA_PACKET;
             
-            // Build packet: header(6) + type(1) + length(2) + data(chunkLen) + checksum(2)
-            uint16_t pktDataLen = chunkLen + 2;  // data + checksum
-            uint16_t pktChk = pktType + (uint8_t)(pktDataLen >> 8) + (uint8_t)(pktDataLen & 0xFF);
+            // Packet length = data bytes + 2 (for checksum)
+            uint16_t pktLen = chunkLen + 2;
             
-            // Send header
-            uint8_t hdr[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, pktType,
-                            (uint8_t)(pktDataLen >> 8), (uint8_t)(pktDataLen & 0xFF)};
-            serial.write(hdr, 9);
-            
-            // Send data
+            // Calculate checksum: sum of type + length_hi + length_lo + all data bytes
+            uint16_t pktChk = pktType + (uint8_t)(pktLen >> 8) + (uint8_t)(pktLen & 0xFF);
             for (int i = 0; i < chunkLen; i++) {
-                serial.write(templateData[offset + i]);
                 pktChk += templateData[offset + i];
             }
             
-            // Send checksum
+            // Send: header(6) + type(1) + length(2) + data(chunkLen) + checksum(2)
+            uint8_t hdr[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, pktType,
+                            (uint8_t)(pktLen >> 8), (uint8_t)(pktLen & 0xFF)};
+            serial.write(hdr, 9);
+            serial.write(&templateData[offset], chunkLen);
             serial.write((uint8_t)(pktChk >> 8));
             serial.write((uint8_t)(pktChk & 0xFF));
             serial.flush();
             
             offset += chunkLen;
-            delay(20);
+            delay(10);
         }
         
-        // Wait a bit for sensor to process
+        Serial.println("[FP] DnChar: data sent, waiting for confirmation...");
         delay(100);
+        
+        // Some sensors don't send a final ACK for DnChar, just return true
         return true;
     }
 
