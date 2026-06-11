@@ -414,17 +414,108 @@ void enrollTask(void* param) {
         return;
     }
     
-    // Now extract template from buffer 1 (for database backup)
-    // Must reload from flash first since store may have cleared buffer
+    // ─── VERIFICATION STEP: Test if fingerprint matches ─────
+    setRegisterState("testing", name);
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("TEST FINGERPRINT");
+    display.setCursor(0, 16);
+    display.println(name.substring(0, 14));
+    display.setCursor(0, 34);
+    display.setTextSize(2);
+    display.println("PLACE");
+    display.println("FINGER");
+    display.display();
+    
+    // Wait for finger removal first (in case still touching from registration)
+    fp.waitForRemoval(3000);
+    delay(500);
+    
+    bool testPassed = false;
+    unsigned long testStart = millis();
+    
+    while (millis() - testStart < 15000) {  // 15 second timeout
+        if (fp.getImage()) {
+            delay(300);
+            if (fp.img2Tz(1)) {
+                int matchId = fp.search(1, 0, 255);
+                if (matchId == id) {
+                    testPassed = true;
+                    break;
+                } else {
+                    // Wrong finger or no match
+                    display.clearDisplay();
+                    display.setTextColor(SSD1306_WHITE);
+                    display.setTextSize(1);
+                    display.setCursor(0, 0);
+                    display.println("NOT MATCHED");
+                    display.setCursor(0, 20);
+                    display.println("Try again...");
+                    display.display();
+                    fp.waitForRemoval(2000);
+                    delay(300);
+                    // Show prompt again
+                    display.clearDisplay();
+                    display.setTextColor(SSD1306_WHITE);
+                    display.setTextSize(1);
+                    display.setCursor(0, 0);
+                    display.println("TEST FINGERPRINT");
+                    display.setCursor(0, 16);
+                    display.println(name.substring(0, 14));
+                    display.setCursor(0, 34);
+                    display.setTextSize(2);
+                    display.println("PLACE");
+                    display.println("FINGER");
+                    display.display();
+                }
+            }
+        }
+        delay(100);
+    }
+    
+    if (!testPassed) {
+        // Test failed - delete the template and fail registration
+        fp.deleteTemplate(id);
+        setRegisterState("failed", "Verification failed");
+        display.clearDisplay();
+        display.setTextColor(SSD1306_WHITE);
+        display.setTextSize(1);
+        display.setCursor(0, 0);
+        display.println("TEST FAILED");
+        display.setCursor(0, 20);
+        display.println("Registration");
+        display.setCursor(0, 34);
+        display.println("cancelled");
+        display.display();
+        holdDisplayFor(3000);
+        registerTaskHandle = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+    
+    // Test passed!
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("VERIFIED!");
+    display.setCursor(0, 18);
+    display.setTextSize(2);
+    display.println("SUCCESS");
+    display.display();
+    delay(1500);
+    fp.waitForRemoval(2000);
+    
+    // ─── EXTRACT TEMPLATE for database backup ───────────────
     delay(200);
     lastTemplateLen = 0;
     lastTemplateId = id;
-    // Try to read back from flash via loadChar + UpChar
     if (fp.loadChar(1, id)) {
         delay(100);
         lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
     }
-    // If loadChar failed (known issue), try UpChar directly on current buffer
     if (lastTemplateLen <= 0) {
         lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
     }
@@ -433,11 +524,9 @@ void enrollTask(void* param) {
         Serial.print(lastTemplateLen);
         Serial.println(" bytes");
     } else {
-        Serial.println("[REG] Template extraction failed - sensor will keep it");
+        Serial.println("[REG] Extraction failed - template stays on sensor only");
         lastTemplateLen = 0;
     }
-    
-    // Template stays in sensor - Python app will extract it via /get_template
     
     // Update roster AND slot mapping
     studentRoster[String(id)] = name;
