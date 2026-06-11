@@ -405,9 +405,7 @@ void enrollTask(void* param) {
         return;
     }
     
-    // Extract template and save to SD
-    setRegisterState("extracting", name);
-    int tplLen = extractAndSaveTemplate(id, classId, id);
+    // Template stays in sensor - Python app will extract it via /get_template
     
     // Update roster AND slot mapping
     studentRoster[String(id)] = name;

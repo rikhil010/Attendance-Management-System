@@ -152,6 +152,10 @@ public:
 
     // Load template from flash into buffer
     bool loadChar(uint8_t bufferId, uint16_t id) {
+        Serial.print("[FP] loadChar buffer=");
+        Serial.print(bufferId);
+        Serial.print(" id=");
+        Serial.println(id);
         uint16_t chk = 0x01 + 0x00 + 0x06 + 0x07 + bufferId + (uint8_t)(id >> 8) + (uint8_t)(id & 0xFF);
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x06, 0x07, bufferId,
                          (uint8_t)(id >> 8), (uint8_t)(id & 0xFF),
@@ -159,8 +163,11 @@ public:
         sendPacket(cmd, sizeof(cmd));
         uint8_t resp[12];
         if (readPacket(resp, 12, 2000)) {
+            Serial.print("[FP] loadChar resp=0x");
+            Serial.println(resp[9], HEX);
             return resp[9] == 0x00;
         }
+        Serial.println("[FP] loadChar timeout");
         return false;
     }
 
