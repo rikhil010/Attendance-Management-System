@@ -229,20 +229,18 @@ def start_attendance_session(class_id):
         (class_id,)
     ).fetchall()
     
+    # Clear sensor and reload from database
+    esp32_request('/clear_attendance', timeout=3)
+    import requests as req_lib
+    ip = get_config().get("esp32_ip", "192.168.0.103")
+    try:
+        req_lib.post(f"http://{ip}/command", json={"cmd": "clear_sensor"}, timeout=5)
+    except Exception:
+        pass
+    
     loaded_count = 0
     if templates:
-        # We have templates in database - use cache mode (clear + reload)
-        print(f"[ATT] Cache mode: loading {len(templates)} templates to ESP32...")
-        esp32_request('/clear_attendance', timeout=3)
-        # Clear sensor and reload from database
-        import requests as req_lib
-        ip = get_config().get("esp32_ip", "192.168.0.103")
-        try:
-            req_lib.post(f"http://{ip}/command", 
-                        json={"cmd": "clear_sensor"}, timeout=5)
-        except Exception:
-            pass
-        
+        print(f"[ATT] Loading {len(templates)} templates to ESP32...")
         for tpl in templates:
             sid = tpl["student_id"]
             name = tpl["name"]
@@ -261,15 +259,10 @@ def start_attendance_session(class_id):
                     print(f"[ATT] Loaded template for {name} (ID:{sid})")
             except Exception as e:
                 print(f"[ATT] Failed to load template for {name}: {e}")
-        print(f"[ATT] {loaded_count}/{len(templates)} templates loaded from database")
-    else:
-        # No templates in database - use sensor directly (legacy mode)
-        print(f"[ATT] Legacy mode: using templates already on sensor")
-        esp32_request('/clear_attendance', timeout=3)
     
     # Start attendance mode on ESP32
     esp32_request('/start_attendance', timeout=5)
-    print(f"[ATT] Attendance started")
+    print(f"[ATT] Attendance started, {loaded_count} templates loaded")
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     cur = db.execute(
