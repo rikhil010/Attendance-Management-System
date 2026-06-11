@@ -9,7 +9,6 @@
 #include "pins.h"
 #include "config.h"
 #include "fingerprint.h"
-#include "ble_service.h"
 
 // ─── Hardware Objects ───────────────────────────────────────
 HardwareSerial fingerSerial(2);
@@ -17,13 +16,6 @@ FingerprintSensor fp(fingerSerial);
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 AsyncWebServer server(80);
 ConfigManager config_manager;
-
-// ─── BLE Globals ────────────────────────────────────────────
-NimBLECharacteristic* pResponseChar = nullptr;
-NimBLECharacteristic* pStatusChar = nullptr;
-NimBLECharacteristic* pTemplateChar = nullptr;
-bool bleClientConnected = false;
-TemplateTransfer bleTemplateTransfer = {0, 0, 0, 0, {0}, false};
 
 // ─── State ──────────────────────────────────────────────────
 bool attendance_mode = false;
@@ -168,16 +160,6 @@ void setRegisterState(const String& state, const String& detail = "") {
     registerState = state;
     registerDetail = detail;
     Serial.println("[REG] " + state + " | " + detail);
-    // Notify BLE client
-    DynamicJsonDocument doc(256);
-    doc["event"] = "register_state";
-    doc["state"] = state;
-    doc["detail"] = detail;
-    doc["id"] = registerTargetId;
-    doc["name"] = registerTargetName;
-    String json;
-    serializeJson(doc, json);
-    bleNotifyStatus(json);
 }
 
 bool isRegisterBusy() {
@@ -440,17 +422,6 @@ void enrollTask(void* param) {
     displayMessage("Registered!", name.substring(0, 12));
     holdDisplayFor(2500);
     
-    // Notify BLE
-    DynamicJsonDocument doc(512);
-    doc["event"] = "register_complete";
-    doc["status"] = "success";
-    doc["student_id"] = id;
-    doc["name"] = name;
-    doc["template_size"] = tplLen;
-    String json;
-    serializeJson(doc, json);
-    bleNotifyStatus(json);
-    
     registerTaskHandle = nullptr;
     vTaskDelete(nullptr);
 }
@@ -498,7 +469,7 @@ void processCommand(const String& jsonCmd, String& response) {
         resp["sta_connected"] = sta_connected;
         resp["sta_ip"] = sta_connected ? WiFi.localIP().toString() : "";
         resp["ap_ip"] = WiFi.softAPIP().toString();
-        resp["ble_connected"] = bleClientConnected;
+
         resp["loaded_class"] = loadedClassId;
         resp["loaded_students"] = loadedStudentCount;
         resp["sd_ready"] = false;
@@ -773,47 +744,6 @@ void processCommand(const String& jsonCmd, String& response) {
     serializeJson(resp, response);
 }
 
-// ─── BLE Template Transfer Callback ─────────────────────────
-void TemplateCharCallbacks::onWrite(NimBLECharacteristic* pChar) {
-    std::string val = pChar->getValue();
-    if (val.length() < 5) return;  // Minimum: 2 id + 1 chunk + 1 total + 1 data
-    
-    const uint8_t* raw = (const uint8_t*)val.data();
-    uint16_t studentId = ((uint16_t)raw[0] << 8) | raw[1];
-    uint8_t chunkNum = raw[2];
-    uint8_t totalChunks = raw[3];
-    int dataLen = val.length() - 4;
-    
-    if (chunkNum == 0) {
-        // Start new transfer
-        bleTemplateTransfer.studentId = studentId;
-        bleTemplateTransfer.receivedBytes = 0;
-        bleTemplateTransfer.inProgress = true;
-        memset(bleTemplateTransfer.data, 0, sizeof(bleTemplateTransfer.data));
-    }
-    
-    // Append data
-    if (bleTemplateTransfer.receivedBytes + dataLen <= (int)sizeof(bleTemplateTransfer.data)) {
-        memcpy(bleTemplateTransfer.data + bleTemplateTransfer.receivedBytes, raw + 4, dataLen);
-        bleTemplateTransfer.receivedBytes += dataLen;
-    }
-    
-    // Last chunk?
-    if (chunkNum + 1 >= totalChunks) {
-        int classId = loadedClassId >= 0 ? loadedClassId : 0;
-        receiveAndStoreTemplate(classId, studentId, String(studentId),
-                               bleTemplateTransfer.data, bleTemplateTransfer.receivedBytes);
-        bleTemplateTransfer.inProgress = false;
-        
-        // Notify completion
-        String resp = "{\"event\":\"template_received\",\"student_id\":" + String(studentId) +
-                      ",\"bytes\":" + String(bleTemplateTransfer.receivedBytes) + "}";
-        bleNotifyStatus(resp);
-        Serial.print("[BLE] Template transfer complete for student ");
-        Serial.println(studentId);
-    }
-}
-
 // ─── HTTP Handlers (wrap processCommand) ────────────────────
 void handleCommand(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
     String body = String((char*)data).substring(0, len);
@@ -1006,8 +936,8 @@ void setup() {
         Serial.println("[WIFI] STA failed, AP only");
     }
     
-    // BLE (start last to avoid conflicts)
-    initBLE("GWASOAT-Device");
+
+
     
     displayIdleStatus();
     Serial.println("=== GWASOAT System Ready ===");
@@ -1093,15 +1023,6 @@ void loop() {
                             rec["slot"] = slotId;
                             rec["name"] = name;
                             rec["time"] = String(millis());
-                            
-                            // Notify BLE
-                            DynamicJsonDocument ev(256);
-                            ev["event"] = "attendance_marked";
-                            ev["student_id"] = studentId;
-                            ev["name"] = name;
-                            String evJson;
-                            serializeJson(ev, evJson);
-                            bleNotifyStatus(evJson);
                             
                             Serial.print("[ATT] Marked: ");
                             Serial.print(name);
