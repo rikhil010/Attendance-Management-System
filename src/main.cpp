@@ -38,6 +38,11 @@ int loadedClassId = -1;
 int loadedStudentCount = 0;
 String loadedClassName = "";
 
+// Last registered template (extracted after regModel, before store)
+uint8_t lastTemplate[1024];
+int lastTemplateLen = 0;
+uint16_t lastTemplateId = 0;
+
 // Slot-to-student mapping (sensor slot → real student ID)
 #define MAX_CLASS_SIZE 255
 int slotToStudent[MAX_CLASS_SIZE];
@@ -388,6 +393,19 @@ void enrollTask(void* param) {
         return;
     }
     
+    // Extract template from buffer BEFORE storing (UpChar works on buffer)
+    delay(200);
+    lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    lastTemplateId = id;
+    if (lastTemplateLen > 0) {
+        Serial.print("[REG] Template extracted: ");
+        Serial.print(lastTemplateLen);
+        Serial.println(" bytes");
+    } else {
+        Serial.println("[REG] Template extraction failed (UpChar), continuing anyway");
+        lastTemplateLen = 0;
+    }
+    
     // Store in sensor
     setRegisterState("saving_model", name);
     displayMessage("Saving...", String(id));
@@ -679,20 +697,35 @@ void processCommand(const String& jsonCmd, String& response) {
         }
     }
     else if (cmd == "get_template") {
-        // Download template from sensor after registration
+        // Return last registered template (extracted during enrollment)
         uint16_t id = doc["id"] | 0;
         if (id == 0) {
             resp["status"] = "error";
             resp["message"] = "Missing id";
+        } else if (lastTemplateLen > 0 && lastTemplateId == id) {
+            // Use the cached extraction from enrollment
+            const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+            String b64 = "";
+            for (int i = 0; i < lastTemplateLen; i += 3) {
+                uint32_t n = ((uint32_t)lastTemplate[i] << 16);
+                if (i + 1 < lastTemplateLen) n |= ((uint32_t)lastTemplate[i+1] << 8);
+                if (i + 2 < lastTemplateLen) n |= lastTemplate[i+2];
+                b64 += b64chars[(n >> 18) & 0x3F];
+                b64 += b64chars[(n >> 12) & 0x3F];
+                b64 += (i + 1 < lastTemplateLen) ? b64chars[(n >> 6) & 0x3F] : '=';
+                b64 += (i + 2 < lastTemplateLen) ? b64chars[n & 0x3F] : '=';
+            }
+            resp["status"] = "success";
+            resp["template"] = b64;
+            resp["size"] = lastTemplateLen;
+            Serial.print("[FP] Served cached template for ID ");
+            Serial.println(id);
         } else {
-            if (!fp.loadChar(1, id)) {
-                resp["status"] = "error";
-                resp["message"] = "Template not in sensor";
-            } else {
+            // Try loadChar as fallback
+            if (fp.loadChar(1, id)) {
                 uint8_t tplData[1024];
                 int tplLen = fp.uploadTemplate(1, tplData, sizeof(tplData));
                 if (tplLen > 0) {
-                    // Base64 encode
                     const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                     String b64 = "";
                     for (int i = 0; i < tplLen; i += 3) {
@@ -709,8 +742,11 @@ void processCommand(const String& jsonCmd, String& response) {
                     resp["size"] = tplLen;
                 } else {
                     resp["status"] = "error";
-                    resp["message"] = "Upload from sensor failed";
+                    resp["message"] = "UpChar failed";
                 }
+            } else {
+                resp["status"] = "error";
+                resp["message"] = "Template not in sensor (loadChar failed)";
             }
         }
     }
