@@ -963,11 +963,9 @@ void setup() {
     // WiFi - Start AP immediately (always available)
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
+    delay(100);  // Give AP time to start
     Serial.print("[WIFI] AP IP: ");
     Serial.println(WiFi.softAPIP());
-    
-    // BLE
-    initBLE("GWASOAT-Device");
     
     // HTTP Server - start NOW so hotspot is usable immediately
     setupLegacyRoutes();
@@ -975,29 +973,30 @@ void setup() {
     Serial.println("[HTTP] Server started on AP");
     displayMessage("GWASOAT Ready", "AP: 192.168.4.1");
     
-    // Now try to connect to router WiFi (non-blocking for the user)
+    // Now try to connect to router WiFi
+    String ssid = config_manager.getWiFiSSID();
+    String password = config_manager.getWiFiPassword();
     String staticIPStr = config_manager.getStaticIP();
     String gatewayStr = config_manager.getGateway();
     String subnetStr = config_manager.getSubnet();
-    IPAddress staticIP, gatewayIP, subnetIP;
-    staticIP.fromString(staticIPStr);
-    gatewayIP.fromString(gatewayStr);
-    subnetIP.fromString(subnetStr);
-    WiFi.config(staticIP, gatewayIP, subnetIP);
     
-    String ssid = config_manager.getWiFiSSID();
-    String password = config_manager.getWiFiPassword();
-    WiFi.setSleep(false);
-    WiFi.setAutoReconnect(true);
-    WiFi.begin(ssid.c_str(), password.c_str());
-    
-    // Wait up to 8 seconds for router connection
-    unsigned long wifiStart = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 8000) {
-        delay(500);
-        Serial.print(".");
+    if (ssid.length() > 0) {
+        IPAddress staticIP, gatewayIP, subnetIP;
+        staticIP.fromString(staticIPStr);
+        gatewayIP.fromString(gatewayStr);
+        subnetIP.fromString(subnetStr);
+        WiFi.config(staticIP, gatewayIP, subnetIP);
+        WiFi.setSleep(false);
+        WiFi.setAutoReconnect(true);
+        WiFi.begin(ssid.c_str(), password.c_str());
+        
+        unsigned long wifiStart = millis();
+        while (WiFi.status() != WL_CONNECTED && millis() - wifiStart < 8000) {
+            delay(500);
+            Serial.print(".");
+        }
+        Serial.println();
     }
-    Serial.println();
     
     sta_connected = (WiFi.status() == WL_CONNECTED);
     if (sta_connected) {
@@ -1006,6 +1005,9 @@ void setup() {
     } else {
         Serial.println("[WIFI] STA failed, AP only");
     }
+    
+    // BLE (start last to avoid conflicts)
+    initBLE("GWASOAT-Device");
     
     displayIdleStatus();
     Serial.println("=== GWASOAT System Ready ===");
