@@ -350,6 +350,61 @@ def setup_routes(app):
             'esp32_state': esp32_state,
         })
 
+    @app.route('/api/extract_templates', methods=['POST'])
+    def extract_templates():
+        """Extract all registered templates from sensor and save to database."""
+        import base64
+        from datetime import datetime
+        
+        db = get_db()
+        students = db.execute(
+            "SELECT id, name, class_id FROM students WHERE registered = 1"
+        ).fetchall()
+        
+        extracted = 0
+        failed = 0
+        for student in students:
+            sid = student['id']
+            # Check if already in database
+            existing = db.execute(
+                "SELECT student_id FROM fingerprint_templates WHERE student_id = ?", (sid,)
+            ).fetchone()
+            if existing:
+                continue  # Already extracted
+            
+            # Try to extract from ESP32 sensor
+            tpl_resp, _, _ = esp32_request('/get_template', params={'id': sid}, timeout=10)
+            if tpl_resp and tpl_resp.status_code == 200:
+                try:
+                    tpl_data = tpl_resp.json()
+                    if tpl_data.get('status') == 'success' and tpl_data.get('template'):
+                        template_bytes = base64.b64decode(tpl_data['template'])
+                        db.execute(
+                            "INSERT OR REPLACE INTO fingerprint_templates "
+                            "(student_id, class_id, template_data, template_size, created_at) "
+                            "VALUES (?, ?, ?, ?, ?)",
+                            (sid, student['class_id'], template_bytes, len(template_bytes),
+                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                        )
+                        extracted += 1
+                        print(f"[EXTRACT] Saved template for {student['name']} (ID:{sid}), {len(template_bytes)} bytes")
+                    else:
+                        failed += 1
+                except Exception as e:
+                    failed += 1
+                    print(f"[EXTRACT] Failed for ID {sid}: {e}")
+            else:
+                failed += 1
+        
+        db.commit()
+        db.close()
+        return jsonify({
+            'status': 'success',
+            'extracted': extracted,
+            'failed': failed,
+            'total_registered': len(students)
+        })
+
     @app.route('/api/start_attendance')
     def start_attendance():
         class_id = request.args.get('class_id', type=int)
