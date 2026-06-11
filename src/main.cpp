@@ -202,59 +202,26 @@ int extractAndSaveTemplate(uint16_t sensorSlot, int classId, int studentId) {
 // Upload a single template received from desktop app (via WiFi or BLE)
 bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
                              const uint8_t* data, int dataLen) {
-    Serial.print("[TPL] Receiving template for student ");
+    Serial.print("[TPL] Loading template for student ");
     Serial.print(studentId);
     Serial.print(" (");
     Serial.print(dataLen);
     Serial.println(" bytes)");
     
-    // Split data into two halves (buffer 1 + buffer 2)
-    int halfLen = dataLen / 2;
-    if (halfLen <= 0) halfLen = dataLen;
-    
+    // Download template to buffer 1
     bool success = false;
-    
-    if (dataLen > 384) {
-        // Full template: download to both buffers, then create model + store
-        bool dl1 = fp.downloadTemplate(1, data, halfLen);
-        delay(50);
-        bool dl2 = fp.downloadTemplate(2, data + halfLen, dataLen - halfLen);
-        
-        if (dl1 && dl2) {
-            // Create model from both buffers
-            delay(100);
-            if (fp.regModel()) {
-                delay(100);
-                if (fp.store(1, (uint16_t)studentId)) {
-                    success = true;
-                    Serial.print("[TPL] Stored at slot ");
-                    Serial.println(studentId);
-                } else {
-                    Serial.println("[TPL] store() failed");
-                }
-            } else {
-                Serial.println("[TPL] regModel() failed after download");
-            }
+    if (fp.downloadTemplate(1, data, dataLen)) {
+        delay(100);
+        // Store from buffer 1 to flash at student ID slot
+        if (fp.store(1, (uint16_t)studentId)) {
+            success = true;
+            Serial.print("[TPL] Stored at slot ");
+            Serial.println(studentId);
         } else {
-            Serial.print("[TPL] downloadTemplate failed: dl1=");
-            Serial.print(dl1);
-            Serial.print(" dl2=");
-            Serial.println(dl2);
+            Serial.println("[TPL] store() failed");
         }
     } else {
-        // Single buffer template - download and store directly
-        if (fp.downloadTemplate(1, data, dataLen)) {
-            delay(100);
-            if (fp.store(1, (uint16_t)studentId)) {
-                success = true;
-                Serial.print("[TPL] Stored at slot ");
-                Serial.println(studentId);
-            } else {
-                Serial.println("[TPL] store() failed");
-            }
-        } else {
-            Serial.println("[TPL] downloadTemplate() failed");
-        }
+        Serial.println("[TPL] downloadTemplate() failed");
     }
     
     if (success && studentId < MAX_CLASS_SIZE) {
@@ -263,7 +230,6 @@ bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
         loadedStudentCount++;
     }
     
-    // Update roster
     studentRoster[String(studentId)] = name;
     return success;
 }
@@ -431,30 +397,7 @@ void enrollTask(void* param) {
         return;
     }
     
-    // Extract template from BOTH buffers (full template = buffer1 + buffer2)
-    delay(200);
-    int buf1Len = fp.uploadTemplate(1, lastTemplate, 512);
-    delay(100);
-    int buf2Len = 0;
-    if (buf1Len > 0) {
-        buf2Len = fp.uploadTemplate(2, lastTemplate + buf1Len, 512);
-    }
-    lastTemplateLen = buf1Len + (buf2Len > 0 ? buf2Len : 0);
-    lastTemplateId = id;
-    if (lastTemplateLen > 0) {
-        Serial.print("[REG] Template extracted: ");
-        Serial.print(lastTemplateLen);
-        Serial.print(" bytes (buf1=");
-        Serial.print(buf1Len);
-        Serial.print(" buf2=");
-        Serial.print(buf2Len);
-        Serial.println(")");
-    } else {
-        Serial.println("[REG] Template extraction failed (UpChar), continuing anyway");
-        lastTemplateLen = 0;
-    }
-    
-    // Store in sensor
+    // Store in sensor FIRST (before extraction which may corrupt buffer)
     setRegisterState("saving_model", name);
     displayMessage("Saving...", String(id));
     bool storeOk = false;
@@ -469,6 +412,29 @@ void enrollTask(void* param) {
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
         return;
+    }
+    
+    // Now extract template from buffer 1 (for database backup)
+    // Must reload from flash first since store may have cleared buffer
+    delay(200);
+    lastTemplateLen = 0;
+    lastTemplateId = id;
+    // Try to read back from flash via loadChar + UpChar
+    if (fp.loadChar(1, id)) {
+        delay(100);
+        lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    }
+    // If loadChar failed (known issue), try UpChar directly on current buffer
+    if (lastTemplateLen <= 0) {
+        lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    }
+    if (lastTemplateLen > 0) {
+        Serial.print("[REG] Template extracted: ");
+        Serial.print(lastTemplateLen);
+        Serial.println(" bytes");
+    } else {
+        Serial.println("[REG] Template extraction failed - sensor will keep it");
+        lastTemplateLen = 0;
     }
     
     // Template stays in sensor - Python app will extract it via /get_template
