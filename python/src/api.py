@@ -268,9 +268,12 @@ def setup_routes(app):
                 # ESP32 accepted - now poll until registration completes
                 print(f"[REGISTER] Waiting for ESP32 to finish enrollment...")
                 import time
-                for _ in range(60):  # Poll for up to 60 seconds
-                    time.sleep(1)
-                    resp, _, _ = esp32_request('/register_status', timeout=3)
+                for _ in range(30):  # Poll for up to 60 seconds (2s intervals)
+                    time.sleep(2)
+                    try:
+                        resp, _, _ = esp32_request('/register_status', timeout=3)
+                    except Exception:
+                        continue  # Network blip, just retry
                     if resp and resp.status_code == 200:
                         try:
                             state_data = resp.json()
@@ -345,14 +348,17 @@ def setup_routes(app):
         # Get local job state
         job_snapshot = dict(register_job)
         
-        # Poll ESP32 for device-side registration state
+        # Poll ESP32 for device-side registration state (don't fail if unreachable)
         esp32_state = {}
-        response, host, err = esp32_request('/register_status', timeout=2)
-        if response is not None and response.status_code == 200:
-            try:
-                esp32_state = response.json()
-            except ValueError:
-                pass
+        try:
+            response, host, err = esp32_request('/register_status', timeout=2)
+            if response is not None and response.status_code == 200:
+                try:
+                    esp32_state = response.json()
+                except ValueError:
+                    pass
+        except Exception:
+            pass  # ESP32 busy with fingerprint, just return local state
 
         # If ESP32 reports success/failed, update local job
         esp_state = esp32_state.get('state', '')

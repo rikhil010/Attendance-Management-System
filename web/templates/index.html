@@ -819,11 +819,10 @@
             let pollTicks = 0;
             registerPollInterval = setInterval(() => {
                 pollTicks += 1;
-                if (pollTicks > 180) {
+                if (pollTicks > 90) {
                     clearInterval(registerPollInterval);
                     registerPollInterval = null;
-                    showStatus(`Registration timeout: ${student_name} (ID: ${student_id})`, 'danger');
-                    alert('Registration timed out. Please try again.');
+                    showStatus(`Registration timeout: ${student_name} (ID: ${student_id}). Try again.`, 'danger');
                     return;
                 }
                 $.get('/api/register_status', function(status) {
@@ -852,7 +851,6 @@
                         clearInterval(registerPollInterval);
                         registerPollInterval = null;
                         showStatus(`Registration successful: ${student_name} (ID: ${student_id})`, 'success');
-                        alert(`Registration successful for ${student_name} (ID: ${student_id})`);
                         loadStudents();
                     } else if (job.final_result === 'failed' || rawState === 'failed') {
                         clearInterval(registerPollInterval);
@@ -860,7 +858,6 @@
                         const espDetail = (esp32State && esp32State.detail) ? String(esp32State.detail) : '';
                         const failMsg = job.error ? `Registration failed: ${job.error}` : (espDetail ? `Registration failed: ${espDetail}` : `Registration failed: ${student_name} (ID: ${student_id})`);
                         showStatus(failMsg, 'danger');
-                        alert(failMsg);
                     } else {
                         showStatus(`Registering ${student_name} (ID: ${student_id})... ${stateText}`, 'warning');
                     }
@@ -873,9 +870,9 @@
                         alert('Could not read registration status from ESP32.');
                     }
                 });
-            }, 1000);
+            }, 2000);
 
-            alert('Registering fingerprint. Place the finger twice on the sensor and wait for completion.');
+            showStatus(`Registering ${student_name} (ID: ${student_id})... Place finger on sensor.`, 'warning');
             $.get(`/api/register/${student_id}`, { name: student_name }, function(data) {
                 if (data.status === 'started') {
                     showStatus(`Registering ${student_name} (ID: ${student_id})...`, 'warning');
@@ -897,8 +894,7 @@
                 }
             }).fail(function(xhr) {
                 const msg = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Register request failed';
-                showStatus('Registration failed', 'danger');
-                alert('Error: ' + msg);
+                showStatus('Registration failed: ' + msg, 'danger');
                 if (registerPollInterval) {
                     clearInterval(registerPollInterval);
                     registerPollInterval = null;
