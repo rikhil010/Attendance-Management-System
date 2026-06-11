@@ -213,11 +213,9 @@ public:
     }
 
     // Upload template FROM sensor TO host (UpChar)
-    // Reads the COMPLETE character file via data packets until end packet (0x08)
-    // Returns number of bytes read, or -1 on failure
+    // Reads packets sequentially (no header scan - data may contain 0xEF01)
     int uploadTemplate(uint8_t bufferId, uint8_t* templateData, int maxLen) {
         clearBuffer();
-        // Send UpChar command: cmd=0x08, bufferId
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x08 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x08, bufferId,
                          (uint8_t)(chk >> 8), (uint8_t)(chk & 0xFF)};
@@ -227,66 +225,71 @@ public:
 
         // Read ACK packet (12 bytes)
         uint8_t ack[12];
-        if (!readPacket(ack, 12, 2000)) {
+        if (!readExact(ack, 12, 2000)) {
             Serial.println("[FP] UpChar: no ACK");
             return -1;
         }
-        if (ack[9] != 0x00) {
-            Serial.print("[FP] UpChar: ACK error 0x");
+        if (ack[6] != 0x07 || ack[9] != 0x00) {
+            Serial.print("[FP] UpChar: bad ACK code 0x");
             Serial.println(ack[9], HEX);
             return -1;
         }
 
-        // Read data packets until we get an end packet (id=0x08)
+        // Read data packets sequentially until end packet (pid=0x08)
         int totalRead = 0;
         int packetCount = 0;
-        unsigned long start = millis();
 
-        while (millis() - start < 6000) {
-            // Sync to packet header: find 0xEF 0x01
-            if (!syncToHeader(2000)) {
-                Serial.println("[FP] UpChar: header sync timeout");
+        while (packetCount < 50) {
+            // Read full 9-byte header directly (packets are back-to-back)
+            uint8_t hdr[9];
+            if (!readExact(hdr, 9, 3000)) {
+                Serial.println("[FP] UpChar: header timeout");
                 break;
             }
-            // Read remaining header: addr(4) + pid(1) + len(2) = 7 bytes
-            uint8_t hdr[7];
-            if (!readExact(hdr, 7, 2000)) {
-                Serial.println("[FP] UpChar: header read timeout");
+            // Validate header
+            if (hdr[0] != 0xEF || hdr[1] != 0x01) {
+                Serial.print("[FP] UpChar: bad header 0x");
+                Serial.print(hdr[0], HEX);
+                Serial.print(" 0x");
+                Serial.println(hdr[1], HEX);
                 break;
             }
-            uint8_t pid = hdr[4];
-            uint16_t pktLen = ((uint16_t)hdr[5] << 8) | hdr[6];
-            int contentLen = pktLen - 2;  // minus 2 checksum bytes
+            uint8_t pid = hdr[6];
+            uint16_t pktLen = ((uint16_t)hdr[7] << 8) | hdr[8];
+            int contentLen = pktLen - 2;  // minus checksum
             if (contentLen <= 0 || contentLen > 256) {
-                Serial.print("[FP] UpChar: bad content len ");
+                Serial.print("[FP] UpChar: bad len ");
                 Serial.println(contentLen);
                 break;
             }
-
-            // Read content bytes
-            int toRead = contentLen;
-            if (totalRead + toRead > maxLen) toRead = maxLen - totalRead;
-            if (!readExact(templateData + totalRead, toRead, 3000)) {
-                Serial.println("[FP] UpChar: content read timeout");
+            if (pid != 0x02 && pid != 0x08) {
+                Serial.print("[FP] UpChar: unexpected pid 0x");
+                Serial.println(pid, HEX);
                 break;
             }
-            totalRead += toRead;
-            // Discard any extra content beyond buffer
-            for (int i = toRead; i < contentLen; i++) {
-                waitReadByte(500);
+
+            // Read content
+            uint8_t content[256];
+            if (!readExact(content, contentLen, 3000)) {
+                Serial.println("[FP] UpChar: content timeout");
+                break;
             }
-            // Read and discard checksum (2 bytes)
-            waitReadByte(500);
-            waitReadByte(500);
+            // Read checksum (2 bytes)
+            uint8_t cs[2];
+            readExact(cs, 2, 1000);
+
+            // Copy content to output buffer
+            for (int i = 0; i < contentLen && totalRead < maxLen; i++) {
+                templateData[totalRead++] = content[i];
+            }
 
             packetCount++;
-            // End packet?
-            if (pid == 0x08) break;
+            if (pid == 0x08) break;  // end packet
         }
 
-        Serial.print("[FP] UpChar: got ");
+        Serial.print("[FP] UpChar: ");
         Serial.print(totalRead);
-        Serial.print(" bytes in ");
+        Serial.print(" bytes, ");
         Serial.print(packetCount);
         Serial.println(" packets");
         return totalRead;

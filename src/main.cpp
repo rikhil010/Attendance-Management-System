@@ -202,11 +202,25 @@ int extractAndSaveTemplate(uint16_t sensorSlot, int classId, int studentId) {
 // Upload a single template received from desktop app (via WiFi or BLE)
 bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
                              const uint8_t* data, int dataLen) {
-    Serial.print("[TPL] Loading template for student ");
+    Serial.print("[TPL] Receiving template for student ");
     Serial.print(studentId);
     Serial.print(" (");
     Serial.print(dataLen);
     Serial.println(" bytes)");
+    
+    // OLED: show receiving
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("Loading Class...");
+    display.setCursor(0, 18);
+    display.println("Received:");
+    display.setCursor(0, 32);
+    display.println(name.substring(0, 16));
+    display.setCursor(0, 50);
+    display.println("Slot " + String(studentId));
+    display.display();
     
     // Download template to buffer 1
     bool success = false;
@@ -333,7 +347,7 @@ void enrollTask(void* param) {
     }
     delay(500);
     
-    // Second scan
+    // Second scan - retry full capture+convert cycle for reliability
     setRegisterState("waiting_2nd", name);
     display.clearDisplay();
     display.setTextColor(SSD1306_WHITE);
@@ -345,34 +359,55 @@ void enrollTask(void* param) {
     display.println("PLACE");
     display.println("AGAIN");
     display.display();
-    if (!fp.waitForFinger(15000)) {
-        setRegisterState("failed", "No finger on 2nd scan");
-        displayMessage("Scan Failed");
-        holdDisplayFor(2000);
-        registerTaskHandle = nullptr;
-        vTaskDelete(nullptr);
-        return;
-    }
-    
-    delay(800);
-    if (!fp.getImage()) {
-        delay(500);
-        fp.getImage();
-    }
-    
-    delay(200);
+
     bool feat2 = false;
-    for (int attempt = 0; attempt < 5; attempt++) {
-        Serial.print("[REG] img2Tz(2) attempt ");
-        Serial.println(attempt + 1);
-        if (fp.img2Tz(2)) { feat2 = true; break; }
-        delay(300);
-        fp.getImage();
-        delay(300);
+    unsigned long scan2Start = millis();
+    while (millis() - scan2Start < 20000 && !feat2) {  // 20s window
+        // Wait for a finger
+        if (!fp.getImage()) {
+            delay(100);
+            continue;
+        }
+        // Finger detected - hold and capture a clean image, then convert
+        delay(400);
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (!fp.getImage()) break;  // finger lifted
+            delay(150);
+            Serial.print("[REG] img2Tz(2) attempt ");
+            Serial.println(attempt + 1);
+            if (fp.img2Tz(2)) { feat2 = true; break; }
+            delay(250);
+        }
+        if (!feat2) {
+            // Failed this cycle - prompt to lift and retry
+            display.clearDisplay();
+            display.setTextColor(SSD1306_WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);
+            display.println("Hold steady!");
+            display.setCursor(0, 18);
+            display.setTextSize(2);
+            display.println("PRESS");
+            display.println("FIRMLY");
+            display.display();
+            fp.waitForRemoval(3000);
+            delay(300);
+            display.clearDisplay();
+            display.setTextColor(SSD1306_WHITE);
+            display.setTextSize(1);
+            display.setCursor(0, 0);
+            display.println("Register: " + name.substring(0, 12));
+            display.setCursor(0, 18);
+            display.setTextSize(2);
+            display.println("PLACE");
+            display.println("AGAIN");
+            display.display();
+        }
     }
+
     if (!feat2) {
         setRegisterState("failed", "Feature extraction failed (2nd)");
-        displayMessage("Feature Fail", "Press harder");
+        displayMessage("Scan Failed", "Try again");
         holdDisplayFor(2500);
         registerTaskHandle = nullptr;
         vTaskDelete(nullptr);
@@ -527,7 +562,18 @@ void enrollTask(void* param) {
     
     // Success
     setRegisterState("success", name + " | " + String(id));
-    displayMessage("Registered!", name.substring(0, 12));
+    display.clearDisplay();
+    display.setTextColor(SSD1306_WHITE);
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println("REGISTERED!");
+    display.setCursor(0, 16);
+    display.println(name.substring(0, 16));
+    display.setCursor(0, 34);
+    display.println("Template sent");
+    display.setCursor(0, 46);
+    display.println("to laptop");
+    display.display();
     holdDisplayFor(2500);
     
     registerTaskHandle = nullptr;
@@ -695,11 +741,13 @@ void processCommand(const String& jsonCmd, String& response) {
                     if (actualLen < decodedLen && src[i+3] != '=') decoded[actualLen++] = triple & 0xFF;
                 }
                 
-                receiveAndStoreTemplate(classId, studentId, name, decoded, actualLen);
+                bool ok = receiveAndStoreTemplate(classId, studentId, name, decoded, actualLen);
                 free(decoded);
-                resp["status"] = "success";
+                resp["status"] = ok ? "success" : "error";
                 resp["student_id"] = studentId;
                 resp["bytes"] = actualLen;
+                resp["loaded_count"] = loadedStudentCount;
+                if (!ok) resp["message"] = "Failed to store template on sensor";
             } else {
                 resp["status"] = "error";
                 resp["message"] = "Memory allocation failed";
