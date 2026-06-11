@@ -350,7 +350,7 @@ def setup_routes(app):
             'esp32_state': esp32_state,
         })
 
-    @app.route('/api/extract_templates', methods=['POST'])
+    @app.route('/api/extract_templates', methods=['GET', 'POST'])
     def extract_templates():
         """Extract all registered templates from sensor and save to database."""
         import base64
