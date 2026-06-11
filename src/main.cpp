@@ -9,7 +9,6 @@
 #include "pins.h"
 #include "config.h"
 #include "fingerprint.h"
-#include "sd_cache.h"
 #include "ble_service.h"
 
 // ─── Hardware Objects ───────────────────────────────────────
@@ -17,7 +16,6 @@ HardwareSerial fingerSerial(2);
 FingerprintSensor fp(fingerSerial);
 Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
 AsyncWebServer server(80);
-SDCache sdCache;
 ConfigManager config_manager;
 
 // ─── BLE Globals ────────────────────────────────────────────
@@ -110,7 +108,7 @@ void displayIdleStatus() {
         display.println("No class loaded");
     }
     display.setCursor(0, 54);
-    display.println(sdCache.isReady() ? "SD: Ready" : "SD: Not found");
+    display.println("Ready");
     display.display();
     idleStatusVisible = true;
     attendancePromptVisible = false;
@@ -206,10 +204,7 @@ int extractAndSaveTemplate(uint16_t sensorSlot, int classId, int studentId) {
         return -1;
     }
     
-    // Save to SD card
-    if (sdCache.isReady()) {
-        sdCache.saveTemplate(classId, studentId, templateData, tplLen);
-    }
+    // Save to SD card (disabled - SD removed)
     
     Serial.print("[TPL] Extracted and saved template, ");
     Serial.print(tplLen);
@@ -217,70 +212,12 @@ int extractAndSaveTemplate(uint16_t sensorSlot, int classId, int studentId) {
     return tplLen;
 }
 
-// Load all templates for a class from SD into sensor
-bool loadClassTemplates(int classId) {
-    if (!sdCache.isReady()) {
-        Serial.println("[TPL] SD not ready, cannot load class");
-        return false;
-    }
-    
-    displayMessage("Loading Class", String(classId));
-    
-    // Clear sensor
-    fp.emptyDatabase();
-    delay(200);
-    
-    // Get list of student IDs for this class
-    int studentIds[MAX_CLASS_SIZE];
-    int count = sdCache.listClassTemplates(classId, studentIds, MAX_CLASS_SIZE);
-    
-    Serial.print("[TPL] Found ");
-    Serial.print(count);
-    Serial.println(" templates on SD");
-    
-    int loaded = 0;
-    uint8_t templateData[1024];
-    
-    for (int i = 0; i < count && i < MAX_CLASS_SIZE; i++) {
-        int tplLen = sdCache.loadTemplate(classId, studentIds[i], templateData, sizeof(templateData));
-        if (tplLen <= 0) continue;
-        
-        // Download template into sensor at slot i
-        if (fp.downloadTemplate(1, templateData, tplLen)) {
-            // Store in sensor flash at slot i
-            if (fp.store(1, (uint16_t)i)) {
-                slotToStudent[i] = studentIds[i];
-                slotToName[i] = String(studentIds[i]);  // Name will be updated by roster
-                loaded++;
-            }
-        }
-        delay(50);
-    }
-    
-    loadedClassId = classId;
-    loadedStudentCount = loaded;
-    
-    displayMessage("Class Loaded", String(loaded) + " students");
-    holdDisplayFor(1500);
-    
-    Serial.print("[TPL] Loaded ");
-    Serial.print(loaded);
-    Serial.println(" templates into sensor");
-    return loaded > 0;
-}
-
 // Upload a single template received from desktop app (via WiFi or BLE)
 bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
                              const uint8_t* data, int dataLen) {
-    // Save to SD cache
-    if (sdCache.isReady()) {
-        sdCache.saveTemplate(classId, studentId, data, dataLen);
-    }
-    
     // Download template into sensor buffer and store at student ID slot
     if (fp.downloadTemplate(1, data, dataLen)) {
         if (fp.store(1, (uint16_t)studentId)) {
-            // Update slot mapping
             if (studentId < MAX_CLASS_SIZE) {
                 slotToStudent[studentId] = studentId;
                 slotToName[studentId] = name;
@@ -564,7 +501,7 @@ void processCommand(const String& jsonCmd, String& response) {
         resp["ble_connected"] = bleClientConnected;
         resp["loaded_class"] = loadedClassId;
         resp["loaded_students"] = loadedStudentCount;
-        resp["sd_ready"] = sdCache.isReady();
+        resp["sd_ready"] = false;
         resp["attendance_mode"] = attendance_mode;
         resp["wifi_ssid"] = config_manager.getWiFiSSID();
     }
@@ -615,34 +552,33 @@ void processCommand(const String& jsonCmd, String& response) {
             resp["status"] = "error";
             resp["message"] = "Missing class_id";
         } else {
+            // Clear sensor for new class
+            fp.emptyDatabase();
+            loadedStudentCount = 0;
+            loadedClassId = classId;
+            for (int i = 0; i < MAX_CLASS_SIZE; i++) {
+                slotToStudent[i] = -1;
+                slotToName[i] = "";
+            }
+            
             // Load student names into roster
             if (doc.containsKey("students")) {
                 JsonArray students = doc["students"].as<JsonArray>();
                 for (int i = 0; i < (int)students.size() && i < MAX_CLASS_SIZE; i++) {
                     int sid = students[i]["id"] | 0;
                     String sname = students[i]["name"] | "Unknown";
-                    slotToName[i] = sname;
                     studentRoster[String(sid)] = sname;
                 }
             }
-            bool ok = loadClassTemplates(classId);
-            resp["status"] = ok ? "success" : "error";
-            resp["loaded"] = loadedStudentCount;
+            if (doc.containsKey("class_name")) {
+                loadedClassName = doc["class_name"].as<String>();
+            }
+            resp["status"] = "success";
+            resp["loaded"] = 0;
             resp["class_id"] = classId;
+            resp["message"] = "Sensor cleared, ready for template uploads";
         }
     }
-    else if (cmd == "load_class_from_sd") {
-        int classId = doc["class_id"] | -1;
-        if (classId < 0) {
-            resp["status"] = "error";
-            resp["message"] = "Missing class_id";
-        } else {
-            bool ok = loadClassTemplates(classId);
-            resp["status"] = ok ? "success" : "error";
-            resp["loaded"] = loadedStudentCount;
-        }
-    }
-
     else if (cmd == "upload_template") {
         // Receive a single template from desktop app
         int studentId = doc["student_id"] | 0;
@@ -756,7 +692,6 @@ void processCommand(const String& jsonCmd, String& response) {
         uint16_t id = doc["id"] | 0;
         int classId = doc["class_id"] | (loadedClassId >= 0 ? loadedClassId : 0);
         fp.deleteTemplate(id);
-        if (sdCache.isReady()) sdCache.deleteTemplate(classId, id);
         studentRoster.remove(String(id));
         resp["status"] = "success";
     }
@@ -812,9 +747,9 @@ void processCommand(const String& jsonCmd, String& response) {
     }
     else if (cmd == "sd_info") {
         resp["status"] = "success";
-        resp["ready"] = sdCache.isReady();
-        resp["total_mb"] = (int)(sdCache.getTotalBytes() / (1024 * 1024));
-        resp["used_mb"] = (int)(sdCache.getUsedBytes() / (1024 * 1024));
+        resp["ready"] = false;
+        resp["total_mb"] = 0;
+        resp["used_mb"] = 0;
     }
     else if (cmd == "clear_sensor") {
         // Wipe all fingerprint templates from sensor (cache cleared)
@@ -969,12 +904,9 @@ void setupLegacyRoutes() {
     });
     
     server.on("/load_class", HTTP_GET, [](AsyncWebServerRequest* req) {
-        DynamicJsonDocument doc(128);
-        doc["cmd"] = "load_class_from_sd";
-        if (req->hasParam("class_id")) doc["class_id"] = req->getParam("class_id")->value().toInt();
-        String json, resp;
-        serializeJson(doc, json);
-        processCommand(json, resp);
+        // Clear sensor and prepare for template uploads
+        String resp;
+        processCommand("{\"cmd\":\"clear_sensor\"}", resp);
         req->send(200, "application/json", resp);
     });
     
@@ -1027,17 +959,6 @@ void setup() {
     // Fingerprint sensor
     fp.begin(FP_BAUD_RATE, PIN_FP_RX, PIN_FP_TX);
     Serial.println("[FP] Sensor initialized");
-    
-    // SD Card (may fail if no card inserted - that's OK)
-    displayMessage("Init SD Card");
-    Serial.println("[SD] Attempting SD init...");
-    if (sdCache.begin()) {
-        Serial.println("[SD] Ready");
-    } else {
-        Serial.println("[SD] Failed - continuing without SD");
-        displayMessage("SD: Not found", "Continuing...");
-        delay(500);
-    }
     
     // WiFi (AP + STA)
     displayMessage("Connecting WiFi");
@@ -1168,11 +1089,6 @@ void loop() {
                             rec["slot"] = slotId;
                             rec["name"] = name;
                             rec["time"] = String(millis());
-                            
-                            // Log to SD
-                            if (sdCache.isReady()) {
-                                sdCache.logAttendance(loadedClassId, 0, studentId, name, String(millis()));
-                            }
                             
                             // Notify BLE
                             DynamicJsonDocument ev(256);

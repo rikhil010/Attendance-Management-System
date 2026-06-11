@@ -258,9 +258,6 @@ def start_attendance_session(class_id):
             except Exception as e:
                 print(f"[ATT] Failed to load template for {name}: {e}")
     
-    # Now load from SD cache on ESP32 (in case templates were saved there)
-    esp32_request('/load_class', params={'class_id': class_id}, timeout=15)
-    
     # Start attendance mode on ESP32
     esp32_request('/start_attendance', timeout=5)
     print(f"[ATT] Attendance started, {loaded_count}/{len(templates)} templates loaded")
