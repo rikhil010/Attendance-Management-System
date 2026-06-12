@@ -315,12 +315,12 @@ def setup_routes(app):
                                     print(f"[REGISTER] get_template HTTP failed")
                                 db2.close()
                                 
-                                # Only delete from sensor if DB save confirmed
+                                # Template stays on sensor for matching (FPM383C
+                                # template reload not supported). DB copy is backup.
                                 if saved_ok:
-                                    esp32_request('/delete', params={'id': student_id}, timeout=5)
-                                    print(f"[REGISTER] Deleted from sensor (safely in DB now)")
+                                    print(f"[REGISTER] Backup saved to DB, template kept on sensor")
                                 else:
-                                    print(f"[REGISTER] Keeping on sensor (DB save failed)")
+                                    print(f"[REGISTER] DB backup failed, template on sensor")
                                 
                                 register_job['final_result'] = 'success'
                                 register_job['active'] = False

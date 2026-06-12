@@ -217,52 +217,11 @@ def start_attendance_session(class_id):
         )
     db.commit()
 
-    # ─── CACHE MODE: Load class templates from DB into sensor ───
-    import base64
-    import requests as req_lib
-    ip = get_config().get("esp32_ip", "192.168.0.103")
-
-    templates = db.execute(
-        "SELECT ft.student_id, ft.template_data, ft.template_size, s.name "
-        "FROM fingerprint_templates ft "
-        "JOIN students s ON s.id = ft.student_id "
-        "WHERE ft.class_id = ? ORDER BY ft.student_id",
-        (class_id,)
-    ).fetchall()
-
-    # Clear sensor cache and attendance buffer
+    # Start attendance - templates stay permanently on sensor.
+    # (FPM383C does not support reliable template export/import - see notes)
     esp32_request('/clear_attendance', timeout=3)
-    try:
-        req_lib.post(f"http://{ip}/command", json={"cmd": "clear_sensor"}, timeout=8)
-    except Exception as e:
-        print(f"[ATT] clear_sensor warning: {e}")
-
-    loaded = 0
-    for tpl in templates:
-        sid = tpl["student_id"]
-        name = tpl["name"]
-        b64 = base64.b64encode(tpl["template_data"]).decode()
-        try:
-            payload = {
-                "cmd": "upload_template",
-                "student_id": sid,
-                "class_id": class_id,
-                "name": name,
-                "template": b64
-            }
-            r = req_lib.post(f"http://{ip}/command", json=payload, timeout=20)
-            if r.status_code == 200 and r.json().get("status") == "success":
-                loaded += 1
-                print(f"[ATT] Loaded {name} (ID:{sid}) into sensor")
-            else:
-                print(f"[ATT] Failed loading {name}: {r.text[:100]}")
-        except Exception as e:
-            print(f"[ATT] Error loading {name}: {e}")
-
-    print(f"[ATT] {loaded}/{len(templates)} templates loaded into sensor")
-
     esp32_request('/start_attendance', timeout=5)
-    print(f"[ATT] Attendance started")
+    print(f"[ATT] Attendance started (templates on sensor)")
     print(f"[ATT] Attendance started")
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -360,15 +319,8 @@ def stop_attendance_session():
 
     response, host, err = esp32_request('/stop_attendance')
     
-    # Clear attendance buffer AND wipe templates from sensor (cache cleared)
+    # Clear only the attendance buffer - templates stay on sensor
     esp32_request('/clear_attendance', timeout=3)
-    import requests as req_lib2
-    ip2 = get_config().get("esp32_ip", "192.168.0.103")
-    try:
-        req_lib2.post(f"http://{ip2}/command", json={"cmd": "clear_sensor"}, timeout=8)
-        print("[ATT] Sensor cache cleared on stop")
-    except Exception:
-        pass
     
     if response is None:
         return {'status': 'error', 'message': 'Cannot connect to ESP32.'}, 502
