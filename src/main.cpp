@@ -432,15 +432,7 @@ void enrollTask(void* param) {
         return;
     }
     
-    // Extract the complete template from buffer 1 (model is here after regModel)
-    delay(300);
-    lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
-    lastTemplateId = id;
-    Serial.print("[REG] Extracted template: ");
-    Serial.print(lastTemplateLen);
-    Serial.println(" bytes");
-    
-    // Store in sensor (UpChar is non-destructive, buffer 1 still has model)
+    // Store in sensor FIRST (clean - no UpChar before it to leave garbage)
     setRegisterState("saving_model", name);
     displayMessage("Saving...", String(id));
     bool storeOk = false;
@@ -456,6 +448,15 @@ void enrollTask(void* param) {
         vTaskDelete(nullptr);
         return;
     }
+    
+    // Extract template from buffer 1 (model still in buffer 1 after store)
+    delay(300);
+    lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    lastTemplateId = id;
+    Serial.print("[REG] Extracted template: ");
+    Serial.print(lastTemplateLen);
+    Serial.println(" bytes");
+    delay(200);
     
     // ─── VERIFICATION STEP: Test if fingerprint matches ─────
     setRegisterState("testing", name);
