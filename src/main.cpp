@@ -870,25 +870,29 @@ void processCommand(const String& jsonCmd, String& response) {
         }
         
         if (tpl != nullptr && tplLen > 0) {
-            // Build base64 directly into response string (reserve capacity)
-            String b64;
-            b64.reserve((tplLen * 4 / 3) + 8);
+            // Build response with pre-allocated capacity to avoid fragmentation
+            int b64Len = ((tplLen + 2) / 3) * 4;
+            response.reserve(b64Len + 60);  // base64 + JSON wrapper
+            response = "{\"status\":\"success\",\"size\":";
+            response += String(tplLen);
+            response += ",\"template\":\"";
             for (int i = 0; i < tplLen; i += 3) {
                 uint32_t n = ((uint32_t)tpl[i] << 16);
                 if (i + 1 < tplLen) n |= ((uint32_t)tpl[i+1] << 8);
                 if (i + 2 < tplLen) n |= tpl[i+2];
-                b64 += b64chars[(n >> 18) & 0x3F];
-                b64 += b64chars[(n >> 12) & 0x3F];
-                b64 += (i + 1 < tplLen) ? b64chars[(n >> 6) & 0x3F] : '=';
-                b64 += (i + 2 < tplLen) ? b64chars[n & 0x3F] : '=';
+                response += b64chars[(n >> 18) & 0x3F];
+                response += b64chars[(n >> 12) & 0x3F];
+                response += (i + 1 < tplLen) ? b64chars[(n >> 6) & 0x3F] : '=';
+                response += (i + 2 < tplLen) ? b64chars[n & 0x3F] : '=';
             }
-            response = "{\"status\":\"success\",\"size\":" + String(tplLen) +
-                       ",\"template\":\"" + b64 + "\"}";
+            response += "\"}";
             Serial.print("[FP] Served template for ID ");
             Serial.print(id);
             Serial.print(" (");
             Serial.print(tplLen);
-            Serial.println(" bytes)");
+            Serial.print(" bytes, resp len ");
+            Serial.print(response.length());
+            Serial.println(")");
         } else {
             response = "{\"status\":\"error\",\"message\":\"Template not available\"}";
         }

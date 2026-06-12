@@ -292,27 +292,34 @@ def setup_routes(app):
                                 db2.commit()
                                 
                                 saved_ok = False
-                                tpl_resp, _, _ = esp32_request('/get_template', params={'id': student_id}, timeout=10)
+                                tpl_resp, _, _ = esp32_request('/get_template', params={'id': student_id}, timeout=15)
                                 if tpl_resp and tpl_resp.status_code == 200:
-                                    tpl_data = tpl_resp.json()
-                                    if tpl_data.get('status') == 'success' and tpl_data.get('template'):
-                                        template_bytes = base64.b64decode(tpl_data['template'])
-                                        s_row = db2.execute("SELECT class_id FROM students WHERE id = ?", (student_id,)).fetchone()
-                                        cid = s_row['class_id'] if s_row else 0
-                                        db2.execute(
-                                            "INSERT OR REPLACE INTO fingerprint_templates "
-                                            "(student_id, class_id, template_data, template_size, created_at) "
-                                            "VALUES (?, ?, ?, ?, ?)",
-                                            (student_id, cid, template_bytes, len(template_bytes),
-                                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                                        )
-                                        db2.commit()
-                                        saved_ok = True
-                                        print(f"[REGISTER] Template SAVED to DB: {len(template_bytes)} bytes")
-                                    else:
-                                        print(f"[REGISTER] Extraction returned no template: {tpl_data}")
+                                    try:
+                                        resp_text = tpl_resp.text
+                                        print(f"[REGISTER] get_template response length: {len(resp_text)}")
+                                        tpl_data = tpl_resp.json()
+                                        if tpl_data.get('status') == 'success' and tpl_data.get('template'):
+                                            template_bytes = base64.b64decode(tpl_data['template'])
+                                            s_row = db2.execute("SELECT class_id FROM students WHERE id = ?", (student_id,)).fetchone()
+                                            cid = s_row['class_id'] if s_row else 0
+                                            db2.execute(
+                                                "INSERT OR REPLACE INTO fingerprint_templates "
+                                                "(student_id, class_id, template_data, template_size, created_at) "
+                                                "VALUES (?, ?, ?, ?, ?)",
+                                                (student_id, cid, template_bytes, len(template_bytes),
+                                                 datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                                            )
+                                            db2.commit()
+                                            saved_ok = True
+                                            print(f"[REGISTER] Template SAVED to DB: {len(template_bytes)} bytes")
+                                        else:
+                                            print(f"[REGISTER] No template in response. Status: {tpl_data.get('status')}, keys: {list(tpl_data.keys())}")
+                                    except Exception as parse_err:
+                                        print(f"[REGISTER] JSON parse error: {parse_err}")
+                                        print(f"[REGISTER] Raw response (first 200): {tpl_resp.text[:200]}")
                                 else:
-                                    print(f"[REGISTER] get_template HTTP failed")
+                                    status = tpl_resp.status_code if tpl_resp else 'None'
+                                    print(f"[REGISTER] get_template failed: HTTP {status}")
                                 db2.close()
                                 
                                 # Template stays on sensor for matching (FPM383C
