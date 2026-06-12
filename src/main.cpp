@@ -39,7 +39,7 @@ int loadedStudentCount = 0;
 String loadedClassName = "";
 
 // Last registered template (extracted after regModel, before store)
-uint8_t lastTemplate[4096];
+uint8_t lastTemplate[2048];
 int lastTemplateLen = 0;
 uint16_t lastTemplateId = 0;
 
@@ -222,30 +222,34 @@ bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
     display.println("Slot " + String(studentId));
     display.display();
     
-    // Download template to buffer 1
-    bool success = false;
-    if (fp.downloadTemplate(1, data, dataLen)) {
-        delay(100);
-        // Store from buffer 1 to flash at student ID slot
-        if (fp.store(1, (uint16_t)studentId)) {
-            success = true;
-            Serial.print("[TPL] Stored at slot ");
-            Serial.println(studentId);
-        } else {
-            Serial.println("[TPL] store() failed");
-        }
-    } else {
-        Serial.println("[TPL] downloadTemplate() failed");
+    // ─── STEP A: DownChar - stream template into Character Buffer 1 ───
+    bool stepA = fp.downloadTemplate(1, data, dataLen);
+    if (!stepA) {
+        Serial.println("[TPL] Step A (DownChar) failed - not storing");
+        return false;
+    }
+    delay(150);
+    
+    // ─── STEP B: Store buffer 1 to flash slot - ONLY if Step A succeeded ───
+    bool stepB = false;
+    for (int i = 0; i < 3; i++) {
+        if (fp.store(1, (uint16_t)studentId)) { stepB = true; break; }
+        delay(200);
+    }
+    if (!stepB) {
+        Serial.println("[TPL] Step B (store) failed");
+        return false;
     }
     
-    if (success && studentId < MAX_CLASS_SIZE) {
+    Serial.print("[TPL] Stored at slot ");
+    Serial.println(studentId);
+    if (studentId < MAX_CLASS_SIZE) {
         slotToStudent[studentId] = studentId;
         slotToName[studentId] = name;
         loadedStudentCount++;
     }
-    
     studentRoster[String(studentId)] = name;
-    return success;
+    return true;
 }
 
 // ─── Enrollment (Register) ──────────────────────────────────
@@ -453,6 +457,12 @@ void enrollTask(void* param) {
     delay(300);
     lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
     lastTemplateId = id;
+    if (lastTemplateLen < 0) {
+        // No clean end packet - retry once
+        delay(200);
+        lastTemplateLen = fp.uploadTemplate(1, lastTemplate, sizeof(lastTemplate));
+    }
+    if (lastTemplateLen < 0) lastTemplateLen = 0;  // mark invalid
     Serial.print("[REG] Extracted template: ");
     Serial.print(lastTemplateLen);
     Serial.println(" bytes");
@@ -606,7 +616,7 @@ int matchFingerprint() {
 // ─── Unified Command Processor ──────────────────────────────
 // Both WiFi (HTTP) and BLE feed commands here
 void processCommand(const String& jsonCmd, String& response) {
-    DynamicJsonDocument doc(8192);
+    DynamicJsonDocument doc(4096);
     DeserializationError err = deserializeJson(doc, jsonCmd);
     DynamicJsonDocument resp(1024);
     
@@ -844,7 +854,7 @@ void processCommand(const String& jsonCmd, String& response) {
         
         uint8_t* tpl = nullptr;
         int tplLen = 0;
-        static uint8_t tmpBuf[4096];
+        static uint8_t tmpBuf[2048];
         
         if (id == 0) {
             response = "{\"status\":\"error\",\"message\":\"Missing id\"}";
