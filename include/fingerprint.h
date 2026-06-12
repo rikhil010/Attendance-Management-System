@@ -213,8 +213,9 @@ public:
     }
 
     // Upload template FROM sensor TO host (UpChar)
-    // Reads packets sequentially (no header scan - data may contain 0xEF01)
+    // Captures ALL raw bytes first, then parses packets offline (robust)
     int uploadTemplate(uint8_t bufferId, uint8_t* templateData, int maxLen) {
+        static uint8_t raw[3072];
         clearBuffer();
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x08 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x08, bufferId,
@@ -230,59 +231,51 @@ public:
             return -1;
         }
         if (ack[6] != 0x07 || ack[9] != 0x00) {
-            Serial.print("[FP] UpChar: bad ACK code 0x");
+            Serial.print("[FP] UpChar: bad ACK 0x");
             Serial.println(ack[9], HEX);
             return -1;
         }
 
-        // Read data packets sequentially until end packet (pid=0x08)
-        int totalRead = 0;
-        int packetCount = 0;
+        // Capture ALL raw bytes until idle gap (transmission complete)
+        int rawLen = 0;
+        unsigned long lastByte = millis();
+        while (millis() - lastByte < 400 && rawLen < (int)sizeof(raw)) {
+            if (serial.available()) {
+                raw[rawLen++] = serial.read();
+                lastByte = millis();
+            } else {
+                delay(1);
+            }
+        }
+        Serial.print("[FP] UpChar raw captured: ");
+        Serial.println(rawLen);
 
-        while (packetCount < 50) {
-            // Read full 9-byte header directly (packets are back-to-back)
-            uint8_t hdr[9];
-            if (!readExact(hdr, 9, 3000)) {
-                Serial.println("[FP] UpChar: header timeout");
-                break;
-            }
+        // Parse packets from raw buffer
+        int totalRead = 0;
+        int pos = 0;
+        int packetCount = 0;
+        while (pos + 9 <= rawLen) {
             // Validate header
-            if (hdr[0] != 0xEF || hdr[1] != 0x01) {
-                Serial.print("[FP] UpChar: bad header 0x");
-                Serial.print(hdr[0], HEX);
-                Serial.print(" 0x");
-                Serial.println(hdr[1], HEX);
+            if (raw[pos] != 0xEF || raw[pos+1] != 0x01) {
+                Serial.print("[FP] UpChar: lost frame at pos ");
+                Serial.println(pos);
                 break;
             }
-            uint8_t pid = hdr[6];
-            uint16_t pktLen = ((uint16_t)hdr[7] << 8) | hdr[8];
-            int contentLen = pktLen - 2;  // minus checksum
-            if (contentLen <= 0 || contentLen > 256) {
+            uint8_t pid = raw[pos+6];
+            uint16_t pktLen = ((uint16_t)raw[pos+7] << 8) | raw[pos+8];
+            int contentLen = pktLen - 2;
+            if (contentLen <= 0 || pos + 9 + contentLen + 2 > rawLen + 2) {
                 Serial.print("[FP] UpChar: bad len ");
                 Serial.println(contentLen);
                 break;
             }
-            if (pid != 0x02 && pid != 0x08) {
-                Serial.print("[FP] UpChar: unexpected pid 0x");
-                Serial.println(pid, HEX);
-                break;
-            }
-
-            // Read content
-            uint8_t content[256];
-            if (!readExact(content, contentLen, 3000)) {
-                Serial.println("[FP] UpChar: content timeout");
-                break;
-            }
-            // Read checksum (2 bytes)
-            uint8_t cs[2];
-            readExact(cs, 2, 1000);
-
-            // Copy content to output buffer
+            // Copy content
             for (int i = 0; i < contentLen && totalRead < maxLen; i++) {
-                templateData[totalRead++] = content[i];
+                if (pos + 9 + i < rawLen) {
+                    templateData[totalRead++] = raw[pos + 9 + i];
+                }
             }
-
+            pos += 9 + contentLen + 2;  // advance past data + checksum
             packetCount++;
             if (pid == 0x08) break;  // end packet
         }
