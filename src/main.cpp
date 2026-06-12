@@ -39,7 +39,7 @@ int loadedStudentCount = 0;
 String loadedClassName = "";
 
 // Last registered template (extracted after regModel, before store)
-uint8_t lastTemplate[1024];
+uint8_t lastTemplate[2048];
 int lastTemplateLen = 0;
 uint16_t lastTemplateId = 0;
 
@@ -606,7 +606,7 @@ int matchFingerprint() {
 // ─── Unified Command Processor ──────────────────────────────
 // Both WiFi (HTTP) and BLE feed commands here
 void processCommand(const String& jsonCmd, String& response) {
-    DynamicJsonDocument doc(2048);
+    DynamicJsonDocument doc(4096);
     DeserializationError err = deserializeJson(doc, jsonCmd);
     DynamicJsonDocument resp(1024);
     
@@ -838,58 +838,51 @@ void processCommand(const String& jsonCmd, String& response) {
         }
     }
     else if (cmd == "get_template") {
-        // Return last registered template (extracted during enrollment)
+        // Return last registered template - build response directly (large data)
         uint16_t id = doc["id"] | 0;
+        const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        
+        uint8_t* tpl = nullptr;
+        int tplLen = 0;
+        uint8_t tmpBuf[2048];
+        
         if (id == 0) {
-            resp["status"] = "error";
-            resp["message"] = "Missing id";
-        } else if (lastTemplateLen > 0 && lastTemplateId == id) {
-            // Use the cached extraction from enrollment
-            const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-            String b64 = "";
-            for (int i = 0; i < lastTemplateLen; i += 3) {
-                uint32_t n = ((uint32_t)lastTemplate[i] << 16);
-                if (i + 1 < lastTemplateLen) n |= ((uint32_t)lastTemplate[i+1] << 8);
-                if (i + 2 < lastTemplateLen) n |= lastTemplate[i+2];
+            response = "{\"status\":\"error\",\"message\":\"Missing id\"}";
+            return;
+        }
+        
+        if (lastTemplateLen > 0 && lastTemplateId == id) {
+            tpl = lastTemplate;
+            tplLen = lastTemplateLen;
+        } else if (fp.loadChar(1, id)) {
+            tplLen = fp.uploadTemplate(1, tmpBuf, sizeof(tmpBuf));
+            if (tplLen > 0) tpl = tmpBuf;
+        }
+        
+        if (tpl != nullptr && tplLen > 0) {
+            // Build base64 directly into response string (reserve capacity)
+            String b64;
+            b64.reserve((tplLen * 4 / 3) + 8);
+            for (int i = 0; i < tplLen; i += 3) {
+                uint32_t n = ((uint32_t)tpl[i] << 16);
+                if (i + 1 < tplLen) n |= ((uint32_t)tpl[i+1] << 8);
+                if (i + 2 < tplLen) n |= tpl[i+2];
                 b64 += b64chars[(n >> 18) & 0x3F];
                 b64 += b64chars[(n >> 12) & 0x3F];
-                b64 += (i + 1 < lastTemplateLen) ? b64chars[(n >> 6) & 0x3F] : '=';
-                b64 += (i + 2 < lastTemplateLen) ? b64chars[n & 0x3F] : '=';
+                b64 += (i + 1 < tplLen) ? b64chars[(n >> 6) & 0x3F] : '=';
+                b64 += (i + 2 < tplLen) ? b64chars[n & 0x3F] : '=';
             }
-            resp["status"] = "success";
-            resp["template"] = b64;
-            resp["size"] = lastTemplateLen;
-            Serial.print("[FP] Served cached template for ID ");
-            Serial.println(id);
+            response = "{\"status\":\"success\",\"size\":" + String(tplLen) +
+                       ",\"template\":\"" + b64 + "\"}";
+            Serial.print("[FP] Served template for ID ");
+            Serial.print(id);
+            Serial.print(" (");
+            Serial.print(tplLen);
+            Serial.println(" bytes)");
         } else {
-            // Try loadChar as fallback
-            if (fp.loadChar(1, id)) {
-                uint8_t tplData[1024];
-                int tplLen = fp.uploadTemplate(1, tplData, sizeof(tplData));
-                if (tplLen > 0) {
-                    const char* b64chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-                    String b64 = "";
-                    for (int i = 0; i < tplLen; i += 3) {
-                        uint32_t n = ((uint32_t)tplData[i] << 16);
-                        if (i + 1 < tplLen) n |= ((uint32_t)tplData[i+1] << 8);
-                        if (i + 2 < tplLen) n |= tplData[i+2];
-                        b64 += b64chars[(n >> 18) & 0x3F];
-                        b64 += b64chars[(n >> 12) & 0x3F];
-                        b64 += (i + 1 < tplLen) ? b64chars[(n >> 6) & 0x3F] : '=';
-                        b64 += (i + 2 < tplLen) ? b64chars[n & 0x3F] : '=';
-                    }
-                    resp["status"] = "success";
-                    resp["template"] = b64;
-                    resp["size"] = tplLen;
-                } else {
-                    resp["status"] = "error";
-                    resp["message"] = "UpChar failed";
-                }
-            } else {
-                resp["status"] = "error";
-                resp["message"] = "Template not in sensor (loadChar failed)";
-            }
+            response = "{\"status\":\"error\",\"message\":\"Template not available\"}";
         }
+        return;
     }
     else if (cmd == "sd_info") {
         resp["status"] = "success";
@@ -921,10 +914,19 @@ void processCommand(const String& jsonCmd, String& response) {
 
 // ─── HTTP Handlers (wrap processCommand) ────────────────────
 void handleCommand(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
-    String body = String((char*)data).substring(0, len);
-    String response;
-    processCommand(body, response);
-    request->send(200, "application/json", response);
+    // Accumulate body across chunks (large template uploads span multiple calls)
+    static String bodyBuf;
+    if (index == 0) bodyBuf = "";
+    for (size_t i = 0; i < len; i++) {
+        bodyBuf += (char)data[i];
+    }
+    // Process only when full body received
+    if (index + len >= total) {
+        String response;
+        processCommand(bodyBuf, response);
+        request->send(200, "application/json", response);
+        bodyBuf = "";
+    }
 }
 
 // Legacy HTTP endpoints that wrap into the unified command system
