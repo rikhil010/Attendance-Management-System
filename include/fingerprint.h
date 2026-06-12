@@ -215,7 +215,7 @@ public:
     // Upload template FROM sensor TO host (UpChar)
     // Captures ALL raw bytes first, then parses packets offline (robust)
     int uploadTemplate(uint8_t bufferId, uint8_t* templateData, int maxLen) {
-        static uint8_t raw[3072];
+        static uint8_t raw[8192];
         clearBuffer();
         uint16_t chk = 0x01 + 0x00 + 0x04 + 0x08 + bufferId;
         uint8_t cmd[] = {0xEF, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00, 0x04, 0x08, bufferId,
@@ -239,7 +239,7 @@ public:
         // Capture ALL raw bytes until idle gap (transmission complete)
         int rawLen = 0;
         unsigned long lastByte = millis();
-        while (millis() - lastByte < 400 && rawLen < (int)sizeof(raw)) {
+        while (millis() - lastByte < 500 && rawLen < (int)sizeof(raw)) {
             if (serial.available()) {
                 raw[rawLen++] = serial.read();
                 lastByte = millis();
@@ -255,29 +255,27 @@ public:
         int pos = 0;
         int packetCount = 0;
         while (pos + 9 <= rawLen) {
-            // Validate header
             if (raw[pos] != 0xEF || raw[pos+1] != 0x01) {
-                Serial.print("[FP] UpChar: lost frame at pos ");
+                Serial.print("[FP] UpChar: lost frame at ");
                 Serial.println(pos);
                 break;
             }
             uint8_t pid = raw[pos+6];
             uint16_t pktLen = ((uint16_t)raw[pos+7] << 8) | raw[pos+8];
             int contentLen = pktLen - 2;
-            if (contentLen <= 0 || pos + 9 + contentLen + 2 > rawLen + 2) {
+            if (contentLen <= 0 || contentLen > 256) {
                 Serial.print("[FP] UpChar: bad len ");
                 Serial.println(contentLen);
                 break;
             }
-            // Copy content
             for (int i = 0; i < contentLen && totalRead < maxLen; i++) {
                 if (pos + 9 + i < rawLen) {
                     templateData[totalRead++] = raw[pos + 9 + i];
                 }
             }
-            pos += 9 + contentLen + 2;  // advance past data + checksum
+            pos += 9 + contentLen + 2;
             packetCount++;
-            if (pid == 0x08) break;  // end packet
+            if (pid == 0x08) break;
         }
 
         Serial.print("[FP] UpChar: ");

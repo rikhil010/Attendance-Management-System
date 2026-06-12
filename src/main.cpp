@@ -39,7 +39,7 @@ int loadedStudentCount = 0;
 String loadedClassName = "";
 
 // Last registered template (extracted after regModel, before store)
-uint8_t lastTemplate[2048];
+uint8_t lastTemplate[4096];
 int lastTemplateLen = 0;
 uint16_t lastTemplateId = 0;
 
@@ -606,7 +606,7 @@ int matchFingerprint() {
 // ─── Unified Command Processor ──────────────────────────────
 // Both WiFi (HTTP) and BLE feed commands here
 void processCommand(const String& jsonCmd, String& response) {
-    DynamicJsonDocument doc(4096);
+    DynamicJsonDocument doc(8192);
     DeserializationError err = deserializeJson(doc, jsonCmd);
     DynamicJsonDocument resp(1024);
     
@@ -844,7 +844,7 @@ void processCommand(const String& jsonCmd, String& response) {
         
         uint8_t* tpl = nullptr;
         int tplLen = 0;
-        uint8_t tmpBuf[2048];
+        static uint8_t tmpBuf[4096];
         
         if (id == 0) {
             response = "{\"status\":\"error\",\"message\":\"Missing id\"}";
