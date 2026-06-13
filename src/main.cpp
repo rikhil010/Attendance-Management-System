@@ -154,8 +154,8 @@ void displayAttendanceResult(bool success, const String& name, int id) {
         display.println("Try again");
     }
     display.display();
-    attendanceFeedbackUntilMs = millis() + (success ? 2000 : 2500);
-    holdDisplayFor(success ? 2000 : 2500);
+    attendanceFeedbackUntilMs = millis() + (success ? 1500 : 800);
+    holdDisplayFor(success ? 1500 : 800);
     attendancePromptVisible = false;
     idleStatusVisible = false;
 }
@@ -1175,10 +1175,9 @@ void loop() {
             displayAttendancePrompt();
         }
         
-        // Always try to detect a finger (non-blocking single check)
-        if (millis() > attendanceFeedbackUntilMs) {
-            if (fp.getImage()) {
-                delay(200);
+        // ALWAYS scan for fingers (no gate - continuous scanning)
+        if (fp.getImage()) {
+            delay(200);
                 if (fp.img2Tz(1)) {
                     int slotId = fp.search(1, 0, (uint16_t)(loadedStudentCount > 0 ? loadedStudentCount : 255));
                     if (slotId < 0) {
@@ -1225,7 +1224,7 @@ void loop() {
                             displayAttendanceResult(true, name, studentId);
                         } else {
                             displayMessage("Already Marked", name.substring(0, 10));
-                            holdDisplayFor(1200);
+                            holdDisplayFor(600);
                         }
                         
                         // Wait briefly for finger removal, then continue regardless
@@ -1234,17 +1233,16 @@ void loop() {
                             if (!fp.getImage()) break;  // Finger removed
                             delay(100);
                         }
-                        // Extra pause to let display show before going back to prompt
-                        delay(500);
+                        // Brief pause then continue scanning
+                        delay(200);
                         attendancePromptVisible = false;
                     } else {
                         displayAttendanceResult(false, "", 0);
-                        delay(1500);
+                        delay(600);
                         attendancePromptVisible = false;
                     }
                 }
             }
-        }
         
         delay(50);  // Small delay between scan attempts
     } else {
