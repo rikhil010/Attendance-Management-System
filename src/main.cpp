@@ -231,13 +231,14 @@ bool receiveAndStoreTemplate(int classId, int studentId, const String& name,
     delay(150);
     
     // ─── STEP B: Store buffer 1 to flash slot - ONLY if Step A succeeded ───
+    delay(500);  // Sensor needs time to process 1940 bytes received via DnChar
     bool stepB = false;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
         if (fp.store(1, (uint16_t)studentId)) { stepB = true; break; }
-        delay(200);
+        delay(500);
     }
     if (!stepB) {
-        Serial.println("[TPL] Step B (store) failed");
+        Serial.println("[TPL] Step B (store) failed after 5 attempts");
         return false;
     }
     

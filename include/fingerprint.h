@@ -345,7 +345,7 @@ public:
             delay(15);
         }
 
-        delay(150);  // Let sensor process
+        delay(300);  // Let sensor fully process the received template
         Serial.println("[FP] DnChar: data sent");
         return true;
     }
