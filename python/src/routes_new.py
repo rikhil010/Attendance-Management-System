@@ -324,18 +324,20 @@ def setup_new_routes(app):
         if request.method == 'POST':
             data = request.form
             db.execute("INSERT INTO classes (name, year, department_id) VALUES (?,?,?)",
-                      (data['name'], data.get('year'), data.get('department_id') or None))
+                      (data['name'], data.get('year') or None, data.get('department_id') or None))
             db.commit(); db.close()
             return jsonify({'status': 'success'})
         rows = db.execute('''
-            SELECT c.*, d.name as dept_name,
-                   GROUP_CONCAT(b.name) as batches
+            SELECT c.id, c.name, c.year, c.department_id,
+                   COALESCE(d.name, '') as dept_name,
+                   COALESCE(GROUP_CONCAT(b.name), '') as batches
             FROM classes c LEFT JOIN departments d ON d.id=c.department_id
             LEFT JOIN batches b ON b.class_id=c.id
             GROUP BY c.id ORDER BY c.name
         ''').fetchall()
         db.close()
-        return jsonify([dict(r) for r in rows])
+        return jsonify([{'id': r['id'], 'name': r['name'], 'year': r['year'] or '',
+                        'dept_name': r['dept_name'], 'batches': r['batches']} for r in rows])
 
     @app.route('/api/admin/classes/<int:cid>', methods=['DELETE'])
     @admin_required
@@ -388,12 +390,15 @@ def setup_new_routes(app):
             db.commit(); db.close()
             return jsonify({'status': 'success'})
         rows = db.execute('''
-            SELECT s.*, c.name as class_name, b.name as batch_name
+            SELECT s.id, s.name, s.prn, s.roll_no, s.class_id, s.batch_id, s.registered,
+                   COALESCE(c.name, '') as class_name, COALESCE(b.name, '') as batch_name
             FROM students s LEFT JOIN classes c ON c.id=s.class_id
             LEFT JOIN batches b ON b.id=s.batch_id ORDER BY s.name
         ''').fetchall()
         db.close()
-        return jsonify([dict(r) for r in rows])
+        return jsonify([{'id': r['id'], 'name': r['name'], 'prn': r['prn'] or '',
+                        'roll_no': r['roll_no'] or '', 'class_name': r['class_name'],
+                        'batch_name': r['batch_name'], 'registered': r['registered']} for r in rows])
 
     @app.route('/api/admin/students/<int:sid>', methods=['DELETE'])
     @admin_required

@@ -46,7 +46,7 @@ def main():
         width=1280,
         height=800
     )
-    webview.start()
+    webview.start(debug=True)  # debug=True enables Ctrl+R reload and dev tools
 
 
 if __name__ == "__main__":
