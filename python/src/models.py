@@ -147,6 +147,20 @@ def initialize_new_schema():
         )
         print("[DB] Default admin created: admin@gwasoat.local / admin123")
 
+    # Migrate existing tables - add missing columns
+    def add_col(table, col, definition):
+        try:
+            db.execute(f"SELECT {col} FROM {table} LIMIT 1")
+        except sqlite3.OperationalError:
+            db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {definition}")
+            print(f"[DB] Added column {table}.{col}")
+
+    add_col("classes", "year", "INTEGER")
+    add_col("classes", "department_id", "INTEGER")
+    add_col("students", "prn", "TEXT")
+    add_col("students", "roll_no", "TEXT")
+    add_col("students", "batch_id", "INTEGER")
+
     db.commit()
     db.close()
     print("[DB] Schema initialized")
