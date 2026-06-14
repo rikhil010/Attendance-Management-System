@@ -1,20 +1,32 @@
-"""GWASOAT Python Application - Main Entry Point"""
+"""GWASOAT Python Application - Main Entry Point (Multi-user)"""
 
 import sys
 import os
 import webview
 import threading
+from datetime import timedelta
 from flask import Flask
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from api import setup_routes
+from models import initialize_new_schema
+from auth import setup_auth_routes
+from routes_new import setup_new_routes
+from api import setup_routes as setup_legacy_routes
 
-app = Flask(__name__, template_folder='../../web/templates', static_folder='../../web/static')
+app = Flask(__name__,
+            template_folder='../../web/templates',
+            static_folder='../../web/static')
+app.secret_key = 'gwasoat-secret-key-2026'
+app.permanent_session_lifetime = timedelta(days=30)
 
-# Setup all API routes
-setup_routes(app)
+# Initialize database schema
+initialize_new_schema()
+
+# Register routes
+setup_auth_routes(app)
+setup_new_routes(app)
+setup_legacy_routes(app)  # Keep legacy /api/ routes for ESP32 communication
 
 
 def run_flask():
@@ -24,16 +36,14 @@ def run_flask():
 
 def main():
     """Main application entry point."""
-    # Start Flask in background thread
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Start web view GUI
     webview.create_window(
-        'Attendance System Admin',
+        'GWASOAT Attendance System',
         'http://127.0.0.1:5000',
-        width=1200,
+        width=1280,
         height=800
     )
     webview.start()

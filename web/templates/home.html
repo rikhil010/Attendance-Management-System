@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GWASOAT - Home</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .navbar { background: #1a1a2e; }
+        .navbar-brand { color: #4da8da !important; font-weight: bold; }
+        .nav-link { color: #ccc !important; }
+        .nav-link:hover { color: #fff !important; }
+        .course-card { background: #fff; border-radius: 10px; padding: 20px; margin-bottom: 15px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); transition: transform 0.1s; cursor: pointer; }
+        .course-card:hover { transform: translateY(-2px); box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+        .course-code { color: #4da8da; font-weight: bold; font-size: 14px; }
+        .course-name { font-size: 18px; font-weight: 600; margin: 5px 0; }
+        .course-meta { color: #666; font-size: 13px; }
+        .welcome-section { padding: 30px 0 20px; }
+        .section-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <span class="navbar-brand">GWASOAT</span>
+            <div class="ms-auto d-flex align-items-center gap-3">
+                <span class="nav-link" id="userName"></span>
+                <a href="/auth/logout" class="nav-link">Logout</a>
+                <a href="/admin" class="nav-link d-none" id="adminLink">Admin</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="welcome-section">
+            <h4 id="welcomeMsg">Welcome</h4>
+            <p class="text-muted" id="roleLabel"></p>
+        </div>
+
+        <div class="section-title">My Courses</div>
+        <div id="courseList">
+            <p class="text-muted">Loading courses...</p>
+        </div>
+    </div>
+
+    <script src="/static/js/jquery-3.6.0.min.js"></script>
+    <script>
+    $(function() {
+        // Get current user
+        $.get('/auth/me', function(user) {
+            $('#userName').text(user.name);
+            $('#welcomeMsg').text('Welcome, ' + user.name);
+            $('#roleLabel').text(user.role === 'admin' ? 'Administrator' : 'Teacher');
+            if (user.role === 'admin') {
+                $('#adminLink').removeClass('d-none');
+            }
+        }).fail(function() {
+            window.location.href = '/login';
+        });
+
+        // Load courses
+        $.get('/api/my_courses', function(courses) {
+            if (courses.length === 0) {
+                $('#courseList').html('<p class="text-muted">No courses assigned yet. Contact admin.</p>');
+                return;
+            }
+            var html = '';
+            courses.forEach(function(c) {
+                html += '<div class="course-card" onclick="window.location.href=\'/course/' + c.id + '\'">';
+                html += '<div class="course-code">' + (c.code || '') + '</div>';
+                html += '<div class="course-name">' + c.name + '</div>';
+                html += '<div class="course-meta">' + (c.class_name || 'No class') + ' &bull; ' + c.student_count + ' students</div>';
+                html += '</div>';
+            });
+            $('#courseList').html(html);
+        });
+    });
+    </script>
+</body>
+</html>

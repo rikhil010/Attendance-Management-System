@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GWASOAT - Course</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+        .navbar { background: #1a1a2e; }
+        .navbar-brand { color: #4da8da !important; font-weight: bold; }
+        .nav-link { color: #ccc !important; }
+        .status-bar { background: #fff; border-radius: 8px; padding: 12px 20px; margin-bottom: 15px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .student-table { background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+        .student-table table { margin: 0; }
+        .badge-registered { background: #28a745; }
+        .badge-unregistered { background: #dc3545; }
+        .attendance-active { background: #d4edda; border: 1px solid #c3e6cb; }
+        .esp-status { font-size: 12px; color: #666; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container-fluid">
+            <a href="/home" class="navbar-brand">← GWASOAT</a>
+            <div class="ms-auto d-flex align-items-center gap-3">
+                <span class="nav-link esp-status" id="espStatus">ESP32: checking...</span>
+                <span class="nav-link" id="userName"></span>
+                <a href="/auth/logout" class="nav-link">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid px-4 py-3">
+        <!-- Course Header -->
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h4 id="courseTitle">Loading...</h4>
+                <p class="text-muted mb-0" id="courseMeta"></p>
+            </div>
+            <div class="d-flex gap-2">
+                <select class="form-select form-select-sm" id="batchSelect" style="width:180px">
+                    <option value="all">Whole Class</option>
+                </select>
+                <button class="btn btn-success btn-sm" id="btnStart">Start Attendance</button>
+                <button class="btn btn-danger btn-sm d-none" id="btnStop">Stop Attendance</button>
+                <button class="btn btn-outline-primary btn-sm" id="btnRegister">Register Student</button>
+            </div>
+        </div>
+
+        <!-- Status Banner -->
+        <div class="status-bar d-none" id="statusBar"></div>
+
+        <div class="row">
+            <!-- Students -->
+            <div class="col-md-5">
+                <div class="student-table">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light">
+                            <tr><th>Roll</th><th>Name</th><th>PRN</th><th>FP</th><th></th></tr>
+                        </thead>
+                        <tbody id="studentBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            <!-- Attendance -->
+            <div class="col-md-7">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6>Attendance</h6>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select class="form-select form-select-sm" id="sessionSelect" style="width:250px"></select>
+                        <button class="btn btn-outline-secondary btn-sm" id="btnExport">CSV</button>
+                    </div>
+                </div>
+                <div class="student-table">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light">
+                            <tr><th>#</th><th>Name</th><th>Roll</th><th>Time</th><th>Status</th></tr>
+                        </thead>
+                        <tbody id="attendanceBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Register Modal -->
+    <div class="modal fade" id="registerModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Register Fingerprint</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <p>Select student to register:</p>
+                    <select class="form-select" id="regStudentSelect"></select>
+                    <div class="mt-3" id="regStatus"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-primary" id="btnDoRegister">Start Registration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/jquery-3.6.0.min.js"></script>
+    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script>
+    var courseId = window.location.pathname.split('/').pop();
+    var attendanceActive = false;
+    var pollInterval = null;
+
+    function showStatus(msg, type) {
+        $('#statusBar').removeClass('d-none').attr('class', 'status-bar alert alert-' + (type || 'info')).text(msg);
+    }
+
+    function loadCourse() {
+        $.get('/api/course/' + courseId, function(data) {
+            $('#courseTitle').text(data.code + ' - ' + data.name);
+            $('#courseMeta').text((data.class_name || '') + ' | ' + data.student_count + ' students');
+            $('#userName').text(data.teacher_name || '');
+            // Populate batch selector
+            $('#batchSelect').empty().append('<option value="all">Whole Class (' + data.student_count + ')</option>');
+            if (data.batches) {
+                data.batches.forEach(function(b) {
+                    $('#batchSelect').append('<option value="' + b.id + '">' + b.name + ' (' + b.count + ')</option>');
+                });
+            }
+            loadStudents();
+            loadSessions();
+        });
+    }
+
+    function loadStudents() {
+        var batch = $('#batchSelect').val();
+        $.get('/api/course/' + courseId + '/students', {batch: batch}, function(students) {
+            var html = '';
+            var regHtml = '';
+            students.forEach(function(s) {
+                var badge = s.registered ? '<span class="badge badge-registered">✓</span>' : '<span class="badge badge-unregistered">✗</span>';
+                html += '<tr><td>' + (s.roll_no || '-') + '</td><td>' + s.name + '</td><td>' + (s.prn || '-') + '</td><td>' + badge + '</td>';
+                html += '<td><button class="btn btn-link btn-sm p-0" onclick="registerStudent(' + s.id + ',\'' + s.name + '\')">Reg</button></td></tr>';
+                if (!s.registered) {
+                    regHtml += '<option value="' + s.id + '">' + s.name + ' (ID:' + s.id + ')</option>';
+                }
+            });
+            $('#studentBody').html(html || '<tr><td colspan="5" class="text-center text-muted">No students</td></tr>');
+            $('#regStudentSelect').html(regHtml || '<option>All registered</option>');
+        });
+    }
+
+    function loadSessions() {
+        $.get('/api/course/' + courseId + '/sessions', function(sessions) {
+            $('#sessionSelect').empty();
+            if (sessions.length === 0) {
+                $('#sessionSelect').append('<option>No sessions yet</option>');
+                return;
+            }
+            sessions.forEach(function(s) {
+                var label = s.started_at + (s.ended_at ? ' (closed)' : ' (active)');
+                $('#sessionSelect').append('<option value="' + s.id + '">' + label + '</option>');
+            });
+            loadAttendance();
+        });
+    }
+
+    function loadAttendance() {
+        var sessionId = $('#sessionSelect').val();
+        if (!sessionId || sessionId === 'No sessions yet') { $('#attendanceBody').html(''); return; }
+        $.get('/api/session/' + sessionId + '/attendance', function(rows) {
+            var html = '';
+            rows.forEach(function(r, i) {
+                var cls = r.status === 'Present' ? 'text-success fw-bold' : (r.status === 'Absent' ? 'text-danger' : 'text-muted');
+                html += '<tr><td>' + (i+1) + '</td><td>' + r.name + '</td><td>' + (r.roll_no || '-') + '</td><td>' + (r.marked_at || '-') + '</td><td class="' + cls + '">' + r.status + '</td></tr>';
+            });
+            $('#attendanceBody').html(html || '<tr><td colspan="5" class="text-center">No data</td></tr>');
+        });
+    }
+
+    function registerStudent(id, name) {
+        showStatus('Registering ' + name + '... Place finger on sensor.', 'warning');
+        $.get('/api/register/' + id, {name: name}, function(resp) {
+            if (resp.status === 'started') {
+                pollRegister(id, name);
+            } else {
+                showStatus('Registration failed: ' + (resp.message || ''), 'danger');
+            }
+        }).fail(function() { showStatus('Cannot reach ESP32', 'danger'); });
+    }
+
+    function pollRegister(id, name) {
+        var regPoll = setInterval(function() {
+            $.get('/api/register_status', function(data) {
+                var state = data.esp32_state ? data.esp32_state.state : (data.job ? data.job.state : '');
+                showStatus('Registering ' + name + ': ' + state, 'warning');
+                if (data.job && (data.job.final_result === 'success' || data.job.final_result === 'failed')) {
+                    clearInterval(regPoll);
+                    if (data.job.final_result === 'success') {
+                        showStatus(name + ' registered successfully!', 'success');
+                    } else {
+                        showStatus('Registration failed: ' + (data.job.error || ''), 'danger');
+                    }
+                    loadStudents();
+                }
+            });
+        }, 2000);
+    }
+
+    // Start/Stop Attendance
+    $('#btnStart').click(function() {
+        var batch = $('#batchSelect').val();
+        showStatus('Starting attendance...', 'info');
+        $.get('/api/course/' + courseId + '/attendance/start', {batch: batch}, function(resp) {
+            if (resp.status === 'success') {
+                attendanceActive = true;
+                $('#btnStart').addClass('d-none');
+                $('#btnStop').removeClass('d-none');
+                showStatus('Attendance active — students can scan now', 'success');
+                loadSessions();
+                pollInterval = setInterval(function() { loadAttendance(); }, 2500);
+            } else {
+                showStatus('Failed: ' + (resp.message || ''), 'danger');
+            }
+        }).fail(function() { showStatus('Cannot reach server', 'danger'); });
+    });
+
+    $('#btnStop').click(function() {
+        $.get('/api/course/' + courseId + '/attendance/stop', function() {
+            attendanceActive = false;
+            $('#btnStop').addClass('d-none');
+            $('#btnStart').removeClass('d-none');
+            showStatus('Attendance stopped', 'info');
+            if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+            loadSessions();
+            loadAttendance();
+        });
+    });
+
+    $('#btnRegister').click(function() { new bootstrap.Modal('#registerModal').show(); });
+    $('#btnDoRegister').click(function() {
+        var sid = $('#regStudentSelect').val();
+        var name = $('#regStudentSelect option:selected').text();
+        if (sid) registerStudent(parseInt(sid), name);
+    });
+    $('#batchSelect').change(loadStudents);
+    $('#sessionSelect').change(loadAttendance);
+    $('#btnExport').click(function() {
+        var sid = $('#sessionSelect').val();
+        if (sid) window.location.href = '/api/session/' + sid + '/export';
+    });
+
+    // ESP32 status
+    setInterval(function() {
+        $.get('/api/device/status', function(d) {
+            if (d && d.status === 'success') {
+                $('#espStatus').html('ESP32: <span class="text-success">●</span> Connected');
+            } else {
+                $('#espStatus').html('ESP32: <span class="text-danger">●</span> Offline');
+            }
+        }).fail(function() {
+            $('#espStatus').html('ESP32: <span class="text-danger">●</span> Offline');
+        });
+    }, 5000);
+
+    loadCourse();
+    });
+    </script>
+</body>
+</html>
