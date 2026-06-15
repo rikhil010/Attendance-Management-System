@@ -114,16 +114,13 @@ LOGIN_HTML = '''<!DOCTYPE html>
     <title>GWASOAT - Login</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background: #1a1a2e; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-        .login-card { background: #16213e; border-radius: 12px; padding: 40px; width: 100%; max-width: 400px; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
-        .login-card h2 { color: #e8e8e8; margin-bottom: 30px; text-align: center; }
-        .form-control { background: #0f3460; border: 1px solid #1a4080; color: #fff; }
-        .form-control:focus { background: #0f3460; color: #fff; border-color: #4da8da; box-shadow: 0 0 0 0.2rem rgba(77,168,218,0.25); }
-        .form-label { color: #a8a8a8; }
-        .btn-primary { background: #4da8da; border: none; width: 100%; padding: 12px; font-size: 16px; }
-        .btn-primary:hover { background: #3d8cb5; }
+        body { background: #1a1a2e; min-height: 100vh; display: flex; align-items: center; justify-content: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+        .login-card { background: #ffffff; border: 1px solid #d1d9e0; border-radius: 6px; padding: 40px; width: 100%; max-width: 400px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .login-card h2 { color: #24292e; margin-bottom: 30px; text-align: center; }
+        .form-control { border-radius: 6px; }
+        .btn-primary { background-color: #0366d6; border-color: #0366d6; width: 100%; padding: 10px; font-size: 15px; }
+        .btn-primary:hover { background-color: #0256cc; border-color: #0256cc; }
         .alert { font-size: 14px; }
-        .form-check-label { color: #a8a8a8; }
     </style>
 </head>
 <body>
