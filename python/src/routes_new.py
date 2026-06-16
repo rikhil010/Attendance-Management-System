@@ -154,19 +154,20 @@ def setup_new_routes(app):
         except ValueError:
             return jsonify({'status': 'error', 'message': 'ID must be a number'}), 400
         db = get_db()
-        # Check if student ID already exists
-        existing = db.execute("SELECT id FROM students WHERE id=?", (sid,)).fetchone()
-        if existing:
-            # Just link to course
+        try:
+            # Create student if doesn't exist
+            existing = db.execute("SELECT id FROM students WHERE id=?", (sid,)).fetchone()
+            if not existing:
+                db.execute("INSERT INTO students (id, name, prn, roll_no, registered) VALUES (?,?,?,?,0)",
+                          (sid, name, prn, roll_no))
+            # Link to course
             db.execute("INSERT OR IGNORE INTO course_students (course_id, student_id) VALUES (?,?)", (course_id, sid))
-        else:
-            # Create student and link
-            db.execute("INSERT INTO students (id, name, prn, roll_no) VALUES (?,?,?,?)",
-                      (sid, name, prn, roll_no))
-            db.execute("INSERT INTO course_students (course_id, student_id) VALUES (?,?)", (course_id, sid))
-        db.commit()
+            db.commit()
+        except Exception as e:
+            db.close()
+            return jsonify({'status': 'error', 'message': str(e)}), 500
         db.close()
-        return jsonify({'status': 'success'})
+        return jsonify({'status': 'success', 'student_id': sid})
 
     # ─── Course Attendance ───────────────────────────────────
     @app.route('/api/course/<int:course_id>/attendance/start')
