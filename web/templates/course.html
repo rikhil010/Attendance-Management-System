@@ -269,7 +269,15 @@
                 $('#btnStop').removeClass('d-none');
                 showStatus('Attendance active — students can scan now', 'success');
                 loadSessions();
-                pollInterval = setInterval(function() { loadAttendance(); }, 2500);
+                pollInterval = setInterval(function() {
+                    // Poll ESP32 for new marks
+                    $.get('/api/attendance', {session_id: resp.session_id}, function(ar) {
+                        if (ar.updated) {
+                            showStatus('Marked: ' + (ar.student_name || '') + ' (ID:' + ar.student_id + ')', 'success');
+                        }
+                    });
+                    loadAttendance();
+                }, 2500);
             } else {
                 showStatus('Failed: ' + (resp.message || ''), 'danger');
             }

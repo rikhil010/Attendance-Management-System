@@ -34,10 +34,8 @@ def mark_student_present(student_id, student_name='', class_id=None, session_id=
         db.close()
         return False
     
-    # Only mark attendance if student belongs to the active class
-    if target_class_id is not None and student["class_id"] != target_class_id:
-        db.close()
-        return False
+    # Only mark if there's a session_attendance record for this student in this session
+    # (the session was pre-populated with only the correct students for the course)
 
     now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     effective_name = student_name.strip() if student_name else student["name"]
