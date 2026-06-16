@@ -23,12 +23,35 @@
         <div class="container-fluid">
             <a href="/home" class="navbar-brand">← GWASOAT</a>
             <div class="ms-auto d-flex align-items-center gap-3">
-                <span class="nav-link esp-status" id="espStatus">ESP32: checking...</span>
+                <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#espPanel" id="espStatusBtn">ESP32: checking...</button>
                 <span class="nav-link" id="userName"></span>
                 <a href="/auth/logout" class="nav-link">Logout</a>
             </div>
         </div>
     </nav>
+
+    <!-- ESP32 Connection Panel (collapsible) -->
+    <div class="collapse" id="espPanel">
+        <div class="container-fluid px-4 py-2">
+            <div class="card p-3">
+                <div class="row align-items-center">
+                    <div class="col-md-3">
+                        <label class="form-label mb-1 small">ESP32 IP</label>
+                        <input type="text" class="form-control form-control-sm" id="esp32Ip" placeholder="192.168.x.x">
+                        <small class="text-muted" id="espConnInfo"></small>
+                    </div>
+                    <div class="col-md-6 d-flex gap-2 flex-wrap align-items-end pt-3">
+                        <button class="btn btn-outline-primary btn-sm" id="btnSaveNet">Save Network</button>
+                        <button class="btn btn-outline-success btn-sm" id="btnDetect">Detect ESP32</button>
+                        <button class="btn btn-outline-info btn-sm" id="btnCheckWifi">Check WiFi</button>
+                    </div>
+                    <div class="col-md-3 text-end pt-3">
+                        <span id="espDetailStatus" class="small text-muted"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 
     <div class="container-fluid px-4 py-3">
         <!-- Course Header -->
@@ -298,18 +321,54 @@
         if (sid) window.location.href = '/api/session/' + sid + '/export';
     });
 
-    // ESP32 status
-    setInterval(function() {
+    // ESP32 connection panel
+    function updateEspStatus() {
+        $.get('/api/network', function(data) {
+            $('#esp32Ip').val(data.esp32_ip || '');
+            var mode = data.mode === 'offline' ? '🔶 Offline' : '🟢 Online';
+            $('#espConnInfo').text(mode + ' (' + (data.current_ssid || 'N/A') + ')');
+        });
         $.get('/api/device/status', function(d) {
             if (d && d.status === 'success') {
-                $('#espStatus').html('ESP32: <span class="text-success">●</span> Connected');
+                $('#espStatusBtn').html('ESP32: <span class="text-success">●</span> Connected');
+                $('#espDetailStatus').text('Connected at ' + ($('#esp32Ip').val() || ''));
             } else {
-                $('#espStatus').html('ESP32: <span class="text-danger">●</span> Offline');
+                $('#espStatusBtn').html('ESP32: <span class="text-danger">●</span> Offline');
+                $('#espDetailStatus').text('Not reachable');
             }
         }).fail(function() {
-            $('#espStatus').html('ESP32: <span class="text-danger">●</span> Offline');
+            $('#espStatusBtn').html('ESP32: <span class="text-danger">●</span> Offline');
+            $('#espDetailStatus').text('Not reachable');
         });
-    }, 5000);
+    }
+    updateEspStatus();
+    setInterval(updateEspStatus, 5000);
+
+    $('#btnSaveNet').click(function() {
+        var ip = $('#esp32Ip').val().trim();
+        if (!ip) { showStatus('Enter IP', 'warning'); return; }
+        $.post('/api/network', {esp32_ip: ip, esp32_use_mdns: 0}, function() {
+            showStatus('Network saved: ' + ip, 'success');
+            updateEspStatus();
+        });
+    });
+    $('#btnDetect').click(function() {
+        showStatus('Scanning for ESP32...', 'info');
+        $.get('/api/network/discover', function(r) {
+            if (r.status === 'success') {
+                $('#esp32Ip').val(r.esp32_ip);
+                showStatus('Found ESP32 at ' + r.esp32_ip, 'success');
+                updateEspStatus();
+            } else { showStatus('ESP32 not found', 'warning'); }
+        }).fail(function() { showStatus('ESP32 not found on network', 'warning'); });
+    });
+    $('#btnCheckWifi').click(function() {
+        $.get('/api/network/sync_ip', function(data) {
+            if (data.changed) $('#esp32Ip').val(data.esp32_ip);
+            showStatus('WiFi: ' + data.ssid + ' | IP: ' + data.esp32_ip + ' | ' + data.mode, 'info');
+            updateEspStatus();
+        });
+    });
 
     loadCourse();
     </script>
