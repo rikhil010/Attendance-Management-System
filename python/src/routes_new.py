@@ -138,6 +138,36 @@ def setup_new_routes(app):
         db.close()
         return jsonify([dict(r) for r in rows])
 
+    @app.route('/api/course/<int:course_id>/add_student', methods=['POST'])
+    @login_required
+    def course_add_student(course_id):
+        """Add a new student and link to this course."""
+        data = request.form
+        name = data.get('name', '').strip()
+        student_id = data.get('id', '').strip()
+        prn = data.get('prn', '').strip()
+        roll_no = data.get('roll_no', '').strip()
+        if not name or not student_id:
+            return jsonify({'status': 'error', 'message': 'Name and ID required'}), 400
+        try:
+            sid = int(student_id)
+        except ValueError:
+            return jsonify({'status': 'error', 'message': 'ID must be a number'}), 400
+        db = get_db()
+        # Check if student ID already exists
+        existing = db.execute("SELECT id FROM students WHERE id=?", (sid,)).fetchone()
+        if existing:
+            # Just link to course
+            db.execute("INSERT OR IGNORE INTO course_students (course_id, student_id) VALUES (?,?)", (course_id, sid))
+        else:
+            # Create student and link
+            db.execute("INSERT INTO students (id, name, prn, roll_no) VALUES (?,?,?,?)",
+                      (sid, name, prn, roll_no))
+            db.execute("INSERT INTO course_students (course_id, student_id) VALUES (?,?)", (course_id, sid))
+        db.commit()
+        db.close()
+        return jsonify({'status': 'success'})
+
     # ─── Course Attendance ───────────────────────────────────
     @app.route('/api/course/<int:course_id>/attendance/start')
     @login_required

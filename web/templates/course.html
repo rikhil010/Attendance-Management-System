@@ -43,7 +43,8 @@
                 </select>
                 <button class="btn btn-success btn-sm" id="btnStart">Start Attendance</button>
                 <button class="btn btn-danger btn-sm d-none" id="btnStop">Stop Attendance</button>
-                <button class="btn btn-outline-primary btn-sm" id="btnRegister">Register Student</button>
+                <button class="btn btn-outline-primary btn-sm" id="btnRegister">Register Fingerprint</button>
+                <button class="btn btn-primary btn-sm" id="btnAddStudent">Add Student</button>
             </div>
         </div>
 
@@ -95,6 +96,37 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-primary" id="btnDoRegister">Start Registration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Student Modal -->
+    <div class="modal fade" id="addStudentModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Add Student to Course</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div class="mb-2">
+                        <label class="form-label">Name</label>
+                        <input type="text" class="form-control form-control-sm" id="addStuName" placeholder="Student Name">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Fingerprint ID (unique number)</label>
+                        <input type="number" class="form-control form-control-sm" id="addStuId" placeholder="e.g. 10">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">PRN / Enrollment No.</label>
+                        <input type="text" class="form-control form-control-sm" id="addStuPrn" placeholder="e.g. 22CS1001">
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label">Roll No.</label>
+                        <input type="text" class="form-control form-control-sm" id="addStuRoll" placeholder="e.g. 01">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button class="btn btn-primary btn-sm" id="btnDoAddStudent">Add Student</button>
                 </div>
             </div>
         </div>
@@ -234,6 +266,26 @@
     });
 
     $('#btnRegister').click(function() { new bootstrap.Modal('#registerModal').show(); });
+    $('#btnAddStudent').click(function() { new bootstrap.Modal('#addStudentModal').show(); });
+    $('#btnDoAddStudent').click(function() {
+        var name = $('#addStuName').val().trim();
+        var id = $('#addStuId').val().trim();
+        var prn = $('#addStuPrn').val().trim();
+        var roll = $('#addStuRoll').val().trim();
+        if (!name || !id) { alert('Name and Fingerprint ID are required'); return; }
+        $.post('/api/course/' + courseId + '/add_student', {name: name, id: id, prn: prn, roll_no: roll}, function(resp) {
+            if (resp.status === 'success') {
+                bootstrap.Modal.getInstance('#addStudentModal').hide();
+                $('#addStuName').val(''); $('#addStuId').val(''); $('#addStuPrn').val(''); $('#addStuRoll').val('');
+                showStatus('Student added: ' + name, 'success');
+                loadStudents();
+            } else {
+                alert(resp.message || 'Failed to add student');
+            }
+        }).fail(function(xhr) {
+            alert(xhr.responseJSON ? xhr.responseJSON.message : 'Error adding student');
+        });
+    });
     $('#btnDoRegister').click(function() {
         var sid = $('#regStudentSelect').val();
         var name = $('#regStudentSelect option:selected').text();
