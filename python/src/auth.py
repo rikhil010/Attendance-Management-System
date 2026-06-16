@@ -4,8 +4,43 @@ Handles login, sessions, and role-based access control.
 """
 
 import functools
+import os
+import json
 from flask import session, request, jsonify, redirect, url_for
 from models import get_db, hash_password
+
+REMEMBER_FILE = os.path.join(os.path.dirname(__file__), '..', '..', 'data', '.remember')
+
+
+def _save_remember(user_id):
+    """Save user ID to file for persistent login."""
+    try:
+        os.makedirs(os.path.dirname(REMEMBER_FILE), exist_ok=True)
+        with open(REMEMBER_FILE, 'w') as f:
+            json.dump({'user_id': user_id}, f)
+    except Exception:
+        pass
+
+
+def _load_remember():
+    """Load saved user ID from file."""
+    try:
+        if os.path.exists(REMEMBER_FILE):
+            with open(REMEMBER_FILE, 'r') as f:
+                data = json.load(f)
+                return data.get('user_id')
+    except Exception:
+        pass
+    return None
+
+
+def _clear_remember():
+    """Delete the remember file."""
+    try:
+        if os.path.exists(REMEMBER_FILE):
+            os.remove(REMEMBER_FILE)
+    except Exception:
+        pass
 
 
 def login_user(email, password):
@@ -83,15 +118,36 @@ def setup_auth_routes(app):
         session['user_id'] = user['id']
         session['user_name'] = user['name']
         session['user_role'] = user['role']
+        session.permanent = True
+
+        # Save to file for persistence across app restarts
         if remember:
-            session.permanent = True
+            _save_remember(user['id'])
+        else:
+            _clear_remember()
 
         return jsonify({'status': 'success', 'user': user})
 
     @app.route('/auth/logout')
     def do_logout():
         session.clear()
+        _clear_remember()
         return redirect('/login')
+
+    # Auto-login from saved remember file on page load
+    @app.before_request
+    def auto_login():
+        if not session.get('user_id'):
+            uid = _load_remember()
+            if uid:
+                db = get_db()
+                user = db.execute("SELECT id, name, email, role FROM users WHERE id=?", (uid,)).fetchone()
+                db.close()
+                if user:
+                    session['user_id'] = user['id']
+                    session['user_name'] = user['name']
+                    session['user_role'] = user['role']
+                    session.permanent = True
 
     @app.route('/auth/me')
     @login_required
