@@ -642,7 +642,7 @@ def build_word(img1, img2):
         "    name VARCHAR(255) NOT NULL,\n"
         "    email VARCHAR(255) UNIQUE NOT NULL,\n"
         "    password VARCHAR(255) NOT NULL,  -- SHA-256 with salt\n"
-        "    role VARCHAR(50) NOT NULL DEFAULT 'teacher',\n"
+        "    role VARCHAR(50) NOT NULL DEFAULT 'student',\n"
         "    created_at DATETIME NOT NULL\n"
         ");\n\n"
         "CREATE TABLE students (\n"
