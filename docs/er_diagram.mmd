@@ -1,0 +1,124 @@
+erDiagram
+    departments {
+        int id PK
+        varchar name UK
+    }
+    classes {
+        int id PK
+        varchar name
+        int year
+        int department_id FK
+    }
+    batches {
+        int id PK
+        varchar name
+        int class_id FK
+    }
+    students {
+        int id PK
+        varchar prn
+        varchar roll_no
+        varchar name
+        int class_id FK
+        int batch_id FK
+        tinyint registered
+    }
+    users {
+        int id PK
+        varchar name
+        varchar email UK
+        varchar password
+        varchar role
+        int student_id FK
+        datetime created_at
+    }
+    courses {
+        int id PK
+        varchar name
+        varchar code
+        int teacher_id FK
+    }
+    course_students {
+        int id PK
+        int course_id FK
+        int student_id FK
+    }
+    fingerprint_templates {
+        int student_id PK,FK
+        int class_id
+        longblob template_data
+        int template_size
+        datetime created_at
+    }
+    attendance_sessions {
+        int id PK
+        int course_id FK
+        int teacher_id FK
+        int class_id FK
+        int batch_id
+        text description
+        datetime started_at
+        datetime ended_at
+    }
+    session_attendance {
+        int id PK
+        int session_id FK
+        int student_id FK
+        varchar student_name
+        varchar status
+        datetime marked_at
+    }
+    grades {
+        int id PK
+        int student_id FK
+        int course_id FK
+        varchar component
+        decimal score
+        decimal max_score
+        varchar grade
+        text remarks
+        int updated_by
+        datetime updated_at
+    }
+    timetable {
+        int id PK
+        int course_id FK
+        int day_of_week
+        varchar start_time
+        varchar end_time
+        varchar room
+    }
+    role_permissions {
+        varchar role PK
+        varchar permission PK
+    }
+    audit_log {
+        int id PK
+        int user_id
+        varchar user_name
+        varchar action
+        text details
+        datetime created_at
+    }
+    app_settings {
+        varchar key PK
+        text value
+    }
+
+    departments ||--o{ classes               : "has"
+    classes     ||--o{ batches               : "divided into"
+    classes     ||--o{ students              : "enrolls"
+    batches     ||--o{ students              : "groups"
+    students    ||--o| users                 : "logs in as"
+    users       ||--o{ courses               : "teaches"
+    courses     ||--o{ course_students       : "has"
+    students    ||--o{ course_students       : "enrolled in"
+    students    ||--|| fingerprint_templates : "registers"
+    courses     ||--o{ attendance_sessions   : "held for"
+    users       ||--o{ attendance_sessions   : "conducts"
+    classes     ||--o{ attendance_sessions   : "for"
+    attendance_sessions ||--o{ session_attendance : "records"
+    students    ||--o{ session_attendance    : "marked in"
+    students    ||--o{ grades                : "receives"
+    courses     ||--o{ grades                : "graded in"
+    courses     ||--o{ timetable             : "scheduled in"

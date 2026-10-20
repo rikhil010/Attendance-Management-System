@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GWASOAT - Home</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
     <style>
         body { background-color: #f6f8fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
         .navbar { background-color: #ffffff; border-bottom: 1px solid #d1d9e0; }
@@ -18,6 +19,9 @@
         .course-meta { color: #586069; font-size: 13px; }
         .welcome-section { padding: 30px 0 20px; }
         .section-title { font-size: 20px; font-weight: 600; margin-bottom: 20px; color: #24292e; }
+        .stat-card { background: #fff; border: 1px solid #d1d9e0; border-radius: 6px; padding: 16px 18px; }
+        .stat-card .num { font-size: 26px; font-weight: 700; color: #0366d6; line-height: 1; }
+        .stat-card .lbl { font-size: 12px; color: #586069; margin-top: 6px; }
     </style>
 </head>
 <body>
@@ -25,9 +29,9 @@
         <div class="container">
             <span class="navbar-brand">GWASOAT</span>
             <div class="ms-auto d-flex align-items-center gap-3">
-                <span class="nav-link" id="userName"></span>
+                <a href="/profile" class="nav-link" id="profileLink"><span id="userName"></span></a>
+                <a href="/admin" class="nav-link d-none" id="adminLink">Admin Panel</a>
                 <a href="/auth/logout" class="nav-link">Logout</a>
-                <a href="/admin" class="nav-link d-none" id="adminLink">Admin</a>
             </div>
         </div>
     </nav>
@@ -38,14 +42,33 @@
             <p class="text-muted" id="roleLabel"></p>
         </div>
 
+        <div class="row g-3 mb-4" id="statsRow"></div>
+
         <div class="section-title">My Courses</div>
         <div id="courseList">
             <p class="text-muted">Loading courses...</p>
         </div>
+
+        <div class="section-title mt-4">Recent Sessions</div>
+        <div class="gw-table-wrap" id="recentWrap">
+            <div style="max-height:40vh;overflow:auto">
+                <table class="gw-table" id="recentTable">
+                    <thead><tr><th>Course</th><th>Started</th><th>Status</th><th>Present</th></tr></thead>
+                    <tbody id="recentBody"></tbody>
+                </table>
+            </div>
+        </div>
     </div>
 
     <script src="/static/js/jquery-3.6.0.min.js"></script>
+    <script src="/static/js/app.js"></script>
     <script>
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
     $(function() {
         // Get current user
         $.get('/auth/me', function(user) {
@@ -68,12 +91,39 @@
             var html = '';
             courses.forEach(function(c) {
                 html += '<div class="course-card" onclick="window.location.href=\'/course/' + c.id + '\'">';
-                html += '<div class="course-code">' + (c.code || '') + '</div>';
-                html += '<div class="course-name">' + c.name + '</div>';
-                html += '<div class="course-meta">' + (c.class_name || 'No class') + ' &bull; ' + c.student_count + ' students</div>';
+                html += '<div class="course-code">' + esc(c.code || '') + '</div>';
+                html += '<div class="course-name">' + esc(c.name) + '</div>';
+                html += '<div class="d-flex justify-content-between align-items-center">';
+                html += '<div class="course-meta">' + esc(c.class_name || 'No class') + ' &bull; ' + esc(c.student_count) + ' students</div>';
+                html += '<button class="gw-row-btn" onclick="event.stopPropagation(); window.location.href=\'/course/' + parseInt(c.id, 10) + '#grades\'">Grades</button>';
+                html += '</div>';
                 html += '</div>';
             });
             $('#courseList').html(html);
+        }).fail(function() {
+            GW.toast('Could not load your courses', 'danger');
+        });
+
+        // Dashboard stats + recent sessions
+        $.get('/api/dashboard', function(d) {
+            var cards = [
+                [d.sessions_today, "Sessions Today"],
+                [d.attendance_rate_today + '%', "Today's Attendance"],
+                [d.course_count, d.role === 'admin' ? 'Total Courses' : 'My Courses'],
+                [d.registered_count + '/' + d.student_count, 'Fingerprints Set']
+            ];
+            var html = '';
+            cards.forEach(function(c) {
+                html += '<div class="col-6 col-md-3"><div class="stat-card"><div class="num">' + c[0] + '</div><div class="lbl">' + c[1] + '</div></div></div>';
+            });
+            $('#statsRow').html(html);
+
+            var rows = '';
+            (d.recent || []).forEach(function(r) {
+                var status = r.ended_at ? '<span class="gw-pill gw-pill-muted">Closed</span>' : '<span class="gw-pill gw-pill-success">Active</span>';
+                rows += '<tr><td>' + esc((r.code ? r.code + ' - ' : '') + (r.course_name || 'Course')) + '</td><td>' + esc(r.started_at) + '</td><td>' + status + '</td><td>' + (r.present || 0) + '/' + (r.total || 0) + '</td></tr>';
+            });
+            $('#recentBody').html(rows || '<tr data-gw-empty><td class="gw-empty" colspan="4">No sessions yet</td></tr>');
         });
     });
     </script>

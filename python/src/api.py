@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import get_config
 from database import (
-    get_db, initialize_database, get_classes, add_class, update_class, 
+    get_db, _fetchone, _fetchall, _execute,
+    initialize_database, get_classes, add_class, update_class,
     delete_class, get_students, add_student, update_student, delete_student
 )
 from network import esp32_request, discover_esp32_host, set_last_working_host, get_last_working_host
@@ -221,9 +222,8 @@ def setup_routes(app):
     @app.route('/api/register/<int:student_id>')
     def register_fingerprint(student_id):
         db = get_db()
-        student_row = db.execute(
-            "SELECT name, registered, class_id FROM students WHERE id = ?", (student_id,)
-        ).fetchone()
+        student_row = _fetchone(db,
+            "SELECT name, registered, class_id FROM students WHERE id = %s", (student_id,))
         db.close()
 
         if student_row is None:
@@ -288,7 +288,7 @@ def setup_routes(app):
                                 from datetime import datetime
                                 
                                 db2 = get_db()
-                                db2.execute("UPDATE students SET registered = 1 WHERE id = ?", (student_id,))
+                                _execute(db2, "UPDATE students SET registered = 1 WHERE id = %s", (student_id,))
                                 db2.commit()
                                 
                                 saved_ok = False
@@ -300,12 +300,18 @@ def setup_routes(app):
                                         tpl_data = tpl_resp.json()
                                         if tpl_data.get('status') == 'success' and tpl_data.get('template'):
                                             template_bytes = base64.b64decode(tpl_data['template'])
-                                            s_row = db2.execute("SELECT class_id FROM students WHERE id = ?", (student_id,)).fetchone()
+                                            s_row = _fetchone(db2,
+                                                "SELECT class_id FROM students WHERE id = %s",
+                                                (student_id,))
                                             cid = s_row['class_id'] if s_row else 0
-                                            db2.execute(
-                                                "INSERT OR REPLACE INTO fingerprint_templates "
+                                            _execute(db2,
+                                                "INSERT INTO fingerprint_templates "
                                                 "(student_id, class_id, template_data, template_size, created_at) "
-                                                "VALUES (?, ?, ?, ?, ?)",
+                                                "VALUES (%s, %s, %s, %s, %s) "
+                                                "ON DUPLICATE KEY UPDATE "
+                                                "template_data = VALUES(template_data), "
+                                                "template_size = VALUES(template_size), "
+                                                "created_at = VALUES(created_at)",
                                                 (student_id, cid, template_bytes, len(template_bytes),
                                                  datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                                             )
@@ -394,18 +400,17 @@ def setup_routes(app):
         from datetime import datetime
         
         db = get_db()
-        students = db.execute(
+        students = _fetchall(db,
             "SELECT id, name, class_id FROM students WHERE registered = 1"
-        ).fetchall()
+        )
         
         extracted = 0
         failed = 0
         for student in students:
             sid = student['id']
             # Check if already in database
-            existing = db.execute(
-                "SELECT student_id FROM fingerprint_templates WHERE student_id = ?", (sid,)
-            ).fetchone()
+            existing = _fetchone(db,
+                "SELECT student_id FROM fingerprint_templates WHERE student_id = %s", (sid,))
             if existing:
                 continue  # Already extracted
             
@@ -416,10 +421,14 @@ def setup_routes(app):
                     tpl_data = tpl_resp.json()
                     if tpl_data.get('status') == 'success' and tpl_data.get('template'):
                         template_bytes = base64.b64decode(tpl_data['template'])
-                        db.execute(
-                            "INSERT OR REPLACE INTO fingerprint_templates "
+                        _execute(db,
+                            "INSERT INTO fingerprint_templates "
                             "(student_id, class_id, template_data, template_size, created_at) "
-                            "VALUES (?, ?, ?, ?, ?)",
+                            "VALUES (%s, %s, %s, %s, %s) "
+                            "ON DUPLICATE KEY UPDATE "
+                            "template_data = VALUES(template_data), "
+                            "template_size = VALUES(template_size), "
+                            "created_at = VALUES(created_at)",
                             (sid, student['class_id'], template_bytes, len(template_bytes),
                              datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
                         )

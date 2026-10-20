@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from models import initialize_new_schema
 from auth import setup_auth_routes
 from routes_new import setup_new_routes
+from routes_features import setup_feature_routes
+from routes_student import setup_student_routes
 from api import setup_routes as setup_legacy_routes
 
 app = Flask(__name__,
@@ -26,6 +28,8 @@ initialize_new_schema()
 # Register routes
 setup_auth_routes(app)
 setup_new_routes(app)
+setup_feature_routes(app)
+setup_student_routes(app)
 setup_legacy_routes(app)  # Keep legacy /api/ routes for ESP32 communication
 
 

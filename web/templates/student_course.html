@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GWASOAT - Course</title>
+    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
+    <style>
+        body { background-color: #f6f8fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
+        .navbar { background-color: #ffffff; border-bottom: 1px solid #d1d9e0; }
+        .navbar-brand { color: #0366d6 !important; font-weight: bold; }
+        .nav-link { color: #586069 !important; }
+        .summary-card { background: #fff; border: 1px solid #d1d9e0; border-radius: 8px; padding: 16px 18px; }
+        .summary-card .num { font-size: 24px; font-weight: 700; color: #0366d6; line-height: 1; }
+        .summary-card .lbl { font-size: 12px; color: #586069; margin-top: 6px; }
+        .pill-present { color: #22863a; font-weight: 600; }
+        .pill-absent { color: #d73a49; font-weight: 600; }
+        .pill-none { color: #8b949e; }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container">
+            <a href="/student" class="navbar-brand">← GWASOAT · Student</a>
+            <div class="ms-auto d-flex align-items-center gap-3">
+                <a href="/auth/logout" class="nav-link">Logout</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container py-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div>
+                <h4 id="courseTitle">Loading...</h4>
+                <p class="text-muted mb-0" id="courseMeta"></p>
+            </div>
+            <button class="btn btn-outline-secondary btn-sm" id="btnExport">Export CSV</button>
+        </div>
+
+        <div class="row g-3 mb-4" id="summaryRow"></div>
+
+        <h6 class="mb-2">Session History</h6>
+        <div class="gw-table-wrap">
+            <div style="max-height:62vh;overflow:auto">
+                <table class="gw-table" id="sessTable">
+                    <thead><tr><th>#</th><th>Date</th><th>Topic</th><th>Status</th><th>Marked At</th></tr></thead>
+                    <tbody id="sessBody"><tr data-gw-empty><td class="gw-empty" colspan="5">Loading...</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/jquery-3.6.0.min.js"></script>
+    <script src="/static/js/app.js"></script>
+    <script>
+    var courseId = window.location.pathname.split('/').pop();
+
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
+
+    function statusPill(st) {
+        if (st === 'Present') return '<span class="pill-present">Present</span>';
+        if (st === 'Absent') return '<span class="pill-absent">Absent</span>';
+        return '<span class="pill-none">—</span>';
+    }
+
+    $('#btnExport').click(function() {
+        window.location.href = '/api/student/course/' + courseId + '/attendance/export';
+    });
+
+    $.get('/api/student/course/' + courseId + '/attendance', function(d) {
+        var c = d.course || {};
+        $('#courseTitle').text((c.code ? c.code + ' - ' : '') + (c.name || 'Course'));
+        $('#courseMeta').text('Teacher: ' + (c.teacher_name || 'TBA'));
+
+        var s = d.summary || {};
+        var low = s.percent < 75;
+        var cards = [
+            [s.held || 0, 'Classes Held'],
+            [s.present || 0, 'Attended'],
+            [s.absent || 0, 'Missed'],
+            [(s.percent || 0) + '%', 'Attendance']
+        ];
+        var html = '';
+        cards.forEach(function(card, i) {
+            var numStyle = (i === 3 && low) ? ' style="color:#d73a49"' : '';
+            html += '<div class="col-6 col-md-3"><div class="summary-card"><div class="num"' + numStyle + '>' + card[0] + '</div><div class="lbl">' + card[1] + '</div></div></div>';
+        });
+        $('#summaryRow').html(html);
+
+        var rows = '';
+        (d.sessions || []).forEach(function(ss, i) {
+            rows += '<tr>'
+                + '<td>' + (i + 1) + '</td>'
+                + '<td>' + esc(ss.started_at) + '</td>'
+                + '<td>' + esc(ss.description || '-') + '</td>'
+                + '<td>' + statusPill(ss.status) + '</td>'
+                + '<td>' + esc(ss.marked_at || '-') + '</td>'
+                + '</tr>';
+        });
+        $('#sessBody').html(rows || '<tr data-gw-empty><td class="gw-empty" colspan="5">No sessions recorded for this course yet</td></tr>');
+        GW.enhanceTable('#sessTable', {});
+    }).fail(function(xhr) {
+        if (xhr.status === 401) { window.location.href = '/login'; return; }
+        var msg = xhr.responseJSON ? xhr.responseJSON.message : 'Could not load course';
+        $('#courseTitle').text('Error');
+        GW.toast(msg, 'danger');
+    });
+    </script>
+</body>
+</html>

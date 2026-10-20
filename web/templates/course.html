@@ -5,16 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GWASOAT - Course</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
     <style>
-        body { background-color: #f6f8fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
         .navbar { background-color: #ffffff; border-bottom: 1px solid #d1d9e0; }
         .navbar-brand { color: #0366d6 !important; font-weight: bold; }
         .nav-link { color: #586069 !important; }
         .status-bar { background: #fff; border: 1px solid #d1d9e0; border-radius: 6px; padding: 10px 16px; margin-bottom: 15px; }
-        .student-table { background: #fff; border: 1px solid #d1d9e0; border-radius: 6px; overflow: hidden; }
-        .student-table table { margin: 0; }
-        .badge-registered { background: #28a745; }
-        .badge-unregistered { background: #dc3545; }
         .esp-status { font-size: 12px; color: #586069; }
     </style>
 </head>
@@ -24,7 +20,7 @@
             <a href="/home" class="navbar-brand">← GWASOAT</a>
             <div class="ms-auto d-flex align-items-center gap-3">
                 <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="collapse" data-bs-target="#espPanel" id="espStatusBtn">ESP32: checking...</button>
-                <span class="nav-link" id="userName"></span>
+                <a href="/profile" class="nav-link" id="userName"></a>
                 <a href="/auth/logout" class="nav-link">Logout</a>
             </div>
         </div>
@@ -55,53 +51,94 @@
 
     <div class="container-fluid px-4 py-3">
         <!-- Course Header -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
             <div>
                 <h4 id="courseTitle">Loading...</h4>
                 <p class="text-muted mb-0" id="courseMeta"></p>
             </div>
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2 flex-wrap justify-content-end align-items-center">
                 <select class="form-select form-select-sm" id="batchSelect" style="width:180px">
                     <option value="all">Whole Class</option>
                 </select>
-                <button class="btn btn-success btn-sm" id="btnStart">Start Attendance</button>
-                <button class="btn btn-danger btn-sm d-none" id="btnStop">Stop Attendance</button>
-                <button class="btn btn-outline-primary btn-sm" id="btnRegister">Register Fingerprint</button>
-                <button class="btn btn-primary btn-sm" id="btnAddStudent">Add Student</button>
+                <button class="btn btn-success btn-sm text-nowrap" id="btnStart">Start Attendance</button>
+                <button class="btn btn-danger btn-sm text-nowrap d-none" id="btnStop">Stop Attendance</button>
+                <button class="btn btn-outline-primary btn-sm text-nowrap d-none" id="btnGrades">Grades</button>
+                <button class="btn btn-outline-primary btn-sm text-nowrap" id="btnRegister">Register Fingerprint</button>
+                <button class="btn btn-primary btn-sm text-nowrap" id="btnAddStudent">Add Student</button>
+                <button class="btn btn-outline-secondary btn-sm text-nowrap" id="btnImport">Import CSV</button>
+                <button class="btn btn-outline-secondary btn-sm text-nowrap" id="btnReport">Reports</button>
             </div>
         </div>
 
         <!-- Status Banner -->
         <div class="status-bar d-none" id="statusBar"></div>
 
+        <!-- Grades summary (course owner / admin only) -->
+        <div class="status-bar d-none d-flex justify-content-between align-items-center flex-wrap gap-2" id="gradesCard">
+            <div>
+                <strong>Grades</strong>
+                <span class="text-muted small ms-2" id="gradesSummary">Loading...</span>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnManageGrades">Manage Grades</button>
+        </div>
+
         <div class="row">
             <!-- Students -->
             <div class="col-md-5">
-                <div class="student-table">
-                    <table class="table table-sm table-hover mb-0">
-                        <thead class="table-light">
-                            <tr><th>Roll</th><th>Name</th><th>PRN</th><th>FP</th><th></th></tr>
-                        </thead>
-                        <tbody id="studentBody"></tbody>
-                    </table>
+                <div class="gw-table-wrap">
+                    <div class="gw-table-toolbar">
+                        <input class="gw-table-search" id="studentSearch" placeholder="Search students...">
+                        <span class="gw-table-count" id="studentCount"></span>
+                    </div>
+                    <div style="max-height:64vh;overflow:auto">
+                        <table class="gw-table" id="studentTable">
+                            <thead>
+                                <tr><th>Roll</th><th>Name</th><th>PRN</th><th data-gw-no-sort title="Fingerprint status" style="text-align:center">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">
+                                        <path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/>
+                                        <path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/>
+                                        <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02"/>
+                                        <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4"/>
+                                        <path d="M8.65 22c.21-.66.45-1.32.57-2"/>
+                                        <path d="M14 13.12c0 2.38 0 6.38-1 8.88"/>
+                                        <path d="M2 16h.01"/>
+                                        <path d="M21.8 16c.2-2 .131-5.354 0-6"/>
+                                        <path d="M9 6.8a6 6 0 0 1 9 5.2c0 .47 0 1.17-.02 2"/>
+                                    </svg>
+                                </th></tr>
+                            </thead>
+                            <tbody id="studentBody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
             <!-- Attendance -->
             <div class="col-md-7">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
                     <h6>Attendance</h6>
-                    <div class="d-flex gap-2 align-items-center">
-                        <select class="form-select form-select-sm" id="sessionSelect" style="width:250px"></select>
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <select class="form-select form-select-sm" id="sessionSelect" style="width:230px"></select>
+                        <button class="btn btn-outline-success btn-sm" id="btnMarkAllPresent" title="Mark all present">All Present</button>
+                        <button class="btn btn-outline-danger btn-sm" id="btnMarkAbsent" title="Mark remaining absent">Rest Absent</button>
                         <button class="btn btn-outline-secondary btn-sm" id="btnExport">CSV</button>
                     </div>
                 </div>
-                <div class="student-table">
-                    <table class="table table-sm mb-0">
-                        <thead class="table-light">
-                            <tr><th>#</th><th>Name</th><th>Roll</th><th>Time</th><th>Status</th></tr>
-                        </thead>
-                        <tbody id="attendanceBody"></tbody>
-                    </table>
+                <div id="topicsBar" style="font-size:13px;background:#fff;border:1px solid #d1d9e0;border-radius:6px;padding:8px 12px;margin-bottom:8px;">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="text-muted">Topics taught (this session)</span>
+                        <button class="gw-row-btn" id="btnSaveTopics">Save</button>
+                    </div>
+                    <textarea id="topicsInput" class="form-control form-control-sm" rows="2" placeholder="List the topics covered in this session..."></textarea>
+                </div>
+                <div class="gw-table-wrap">
+                    <div style="max-height:64vh;overflow:auto">
+                        <table class="gw-table" id="attendanceTable">
+                            <thead>
+                                <tr><th>#</th><th>Name</th><th>Roll</th><th>Time</th><th>Status</th><th data-gw-no-sort>Set</th></tr>
+                            </thead>
+                            <tbody id="attendanceBody"></tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -155,12 +192,123 @@
         </div>
     </div>
 
+    <!-- Import CSV Modal -->
+    <div class="modal fade" id="importModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Import Students (CSV)</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <p class="text-muted small">Upload a CSV with columns: <code>id, name, prn, roll_no</code>. Existing IDs are updated; new ones are created and linked to this course.</p>
+                    <input type="file" class="form-control form-control-sm" id="importFile" accept=".csv">
+                    <div class="mt-3 small" id="importResult"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Close</button>
+                    <button class="btn btn-primary btn-sm" id="btnDoImport">Upload</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Reports Modal -->
+    <div class="modal fade" id="reportModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Attendance Report</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div class="d-flex gap-2 align-items-end flex-wrap mb-3">
+                        <div><label class="form-label small mb-0">From</label><input type="date" class="form-control form-control-sm" id="repStart"></div>
+                        <div><label class="form-label small mb-0">To</label><input type="date" class="form-control form-control-sm" id="repEnd"></div>
+                        <div><label class="form-label small mb-0">Defaulter below %</label><input type="number" class="form-control form-control-sm" id="repThreshold" value="75" style="width:120px"></div>
+                        <button class="btn btn-primary btn-sm" id="btnRunReport">Generate</button>
+                        <button class="btn btn-outline-secondary btn-sm" id="btnExportReport">Export CSV</button>
+                        <div class="ms-auto small text-muted" id="repSummary"></div>
+                    </div>
+                    <div class="form-check form-switch mb-2">
+                        <input class="form-check-input" type="checkbox" id="repDefaultersOnly">
+                        <label class="form-check-label small" for="repDefaultersOnly">Show defaulters only</label>
+                    </div>
+                    <div class="gw-table-wrap">
+                        <div class="gw-table-toolbar"><input class="gw-table-search" id="repSearch" placeholder="Search..."><span class="gw-table-count" id="repCount"></span></div>
+                        <div style="max-height:55vh;overflow:auto">
+                            <table class="gw-table" id="reportTable">
+                                <thead><tr><th>Roll</th><th>Name</th><th>PRN</th><th>Held</th><th>Present</th><th>Absent</th><th>%</th><th>Status</th></tr></thead>
+                                <tbody id="reportBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Grades Modal -->
+    <div class="modal fade" id="gradesModal" tabindex="-1">
+        <div class="modal-dialog modal-xl">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Grades</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div class="card p-3 mb-3">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-6 col-xl-3">
+                                <label class="form-label small mb-0">Student</label>
+                                <select class="form-select form-select-sm" id="grStudent"></select>
+                            </div>
+                            <div class="col-6 col-xl-2">
+                                <label class="form-label small mb-0">Component</label>
+                                <input class="form-control form-control-sm" id="grComponent" placeholder="e.g. Midterm">
+                            </div>
+                            <div class="col-6 col-xl-1">
+                                <label class="form-label small mb-0">Score</label>
+                                <input type="number" step="0.01" min="0" class="form-control form-control-sm" id="grScore">
+                            </div>
+                            <div class="col-6 col-xl-1">
+                                <label class="form-label small mb-0">Max</label>
+                                <input type="number" step="0.01" min="0.01" class="form-control form-control-sm" id="grMax" value="100">
+                            </div>
+                            <div class="col-6 col-xl-1">
+                                <label class="form-label small mb-0">Grade</label>
+                                <input class="form-control form-control-sm" id="grLetter" placeholder="A">
+                            </div>
+                            <div class="col-6 col-xl-2">
+                                <label class="form-label small mb-0">Remarks</label>
+                                <input class="form-control form-control-sm" id="grRemarks">
+                            </div>
+                            <div class="col-6 col-xl-2">
+                                <button class="btn btn-primary btn-sm w-100" id="btnSaveGrade">Save Grade</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="gw-table-wrap">
+                        <div class="gw-table-toolbar"><input class="gw-table-search" id="grSearch" placeholder="Search..."><span class="gw-table-count" id="grCount"></span></div>
+                        <div style="max-height:50vh;overflow:auto">
+                            <table class="gw-table" id="gradesTable">
+                                <thead><tr><th>Roll</th><th>Name</th><th>Component</th><th>Score</th><th>Grade</th><th>Remarks</th><th data-gw-no-sort></th></tr></thead>
+                                <tbody id="gradesBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/jquery-3.6.0.min.js"></script>
     <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
     <script>
     var courseId = window.location.pathname.split('/').pop();
     var attendanceActive = false;
     var pollInterval = null;
+    var canManageGrades = false;
+    var gradeRows = [];
+
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
 
     function showStatus(msg, type) {
         $('#statusBar').removeClass('d-none').attr('class', 'status-bar alert alert-' + (type || 'info')).text(msg);
@@ -180,6 +328,24 @@
             }
             loadStudents();
             loadSessions();
+            // Grades are managed only by the course's teacher (or an admin); the API enforces this too.
+            canManageGrades = !!data.can_manage_grades;
+            $('#btnGrades').toggleClass('d-none', !canManageGrades);
+            $('#gradesCard').toggleClass('d-none', !canManageGrades);
+            if (canManageGrades) {
+                if (location.hash === '#grades') openGrades(); else loadGrades();
+            }
+        }).fail(function(xhr) {
+            // The page is server-side owner-gated, but guard the fetch too so a
+            // 403/404 does not leave a blank page: notify and return to home.
+            if (xhr.status === 403 || xhr.status === 404) {
+                var msg = (xhr.responseJSON && xhr.responseJSON.message)
+                    ? xhr.responseJSON.message : 'You do not have access to this course';
+                GW.toast(msg, 'danger');
+                setTimeout(function() { window.location.href = '/home'; }, 1200);
+            } else {
+                GW.toast('Could not load this course. Please try again.', 'danger');
+            }
         });
     }
 
@@ -189,32 +355,59 @@
             var html = '';
             var regHtml = '';
             students.forEach(function(s) {
-                var badge = s.registered ? '<span class="badge badge-registered">✓</span>' : '<span class="badge badge-unregistered">✗</span>';
-                html += '<tr><td>' + (s.roll_no || '-') + '</td><td>' + s.name + '</td><td>' + (s.prn || '-') + '</td><td>' + badge + '</td>';
-                html += '<td><button class="btn btn-link btn-sm p-0" onclick="registerStudent(' + s.id + ',\'' + s.name + '\')">Reg</button></td></tr>';
+                var fpCell = s.registered
+                    ? '<span class="gw-pill gw-pill-success" style="cursor:pointer" title="Re-register fingerprint" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Registered</span>'
+                    : '<button class="gw-row-btn" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Register</button>';
+                html += '<tr><td>' + esc(s.roll_no || '-') + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.prn || '-') + '</td><td style="text-align:center">' + fpCell + '</td></tr>';
                 if (!s.registered) {
-                    regHtml += '<option value="' + s.id + '">' + s.name + ' (ID:' + s.id + ')</option>';
+                    regHtml += '<option value="' + s.id + '">' + esc(s.name) + ' (ID:' + s.id + ')</option>';
                 }
             });
-            $('#studentBody').html(html || '<tr><td colspan="5" class="text-center text-muted">No students</td></tr>');
+            $('#studentBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="4">No students in this selection</td></tr>');
             $('#regStudentSelect').html(regHtml || '<option>All registered</option>');
+            $('#studentCount').text(students.length + ' students');
+            GW.enhanceTable('#studentTable', { search: '#studentSearch', countEl: '#studentCount' });
         });
     }
 
+    var sessionData = {};
     function loadSessions() {
         $.get('/api/course/' + courseId + '/sessions', function(sessions) {
             $('#sessionSelect').empty();
+            sessionData = {};
             if (sessions.length === 0) {
                 $('#sessionSelect').append('<option>No sessions yet</option>');
+                updateTopicsBar();
                 return;
             }
             sessions.forEach(function(s) {
+                sessionData[s.id] = s;
                 var label = s.started_at + (s.ended_at ? ' (closed)' : ' (active)');
                 $('#sessionSelect').append('<option value="' + s.id + '">' + label + '</option>');
             });
+            updateTopicsBar();
             loadAttendance();
         });
     }
+
+    function updateTopicsBar() {
+        var sid = $('#sessionSelect').val();
+        var s = sessionData[sid];
+        var hasSession = sid && sid !== 'No sessions yet';
+        $('#topicsInput').val(hasSession && s ? (s.description || '') : '');
+        $('#topicsInput').prop('disabled', !hasSession);
+        $('#btnSaveTopics').prop('disabled', !hasSession);
+    }
+
+    $('#btnSaveTopics').click(function() {
+        var sid = $('#sessionSelect').val();
+        if (!sid || sid === 'No sessions yet') { GW.toast('Select a session first', 'warning'); return; }
+        var val = $('#topicsInput').val().trim();
+        $.post('/api/session/' + sid + '/description', {description: val}, function() {
+            if (sessionData[sid]) sessionData[sid].description = val;
+            GW.toast('Topics saved', 'success');
+        }).fail(function() { GW.toast('Could not save topics', 'danger'); });
+    });
 
     function loadAttendance() {
         var sessionId = $('#sessionSelect').val();
@@ -222,10 +415,14 @@
         $.get('/api/session/' + sessionId + '/attendance', function(rows) {
             var html = '';
             rows.forEach(function(r, i) {
-                var cls = r.status === 'Present' ? 'text-success fw-bold' : (r.status === 'Absent' ? 'text-danger' : 'text-muted');
-                html += '<tr><td>' + (i+1) + '</td><td>' + r.name + '</td><td>' + (r.roll_no || '-') + '</td><td>' + (r.marked_at || '-') + '</td><td class="' + cls + '">' + r.status + '</td></tr>';
+                var pill = r.status === 'Present' ? '<span class="gw-pill gw-pill-success">Present</span>'
+                    : (r.status === 'Absent' ? '<span class="gw-pill gw-pill-danger">Absent</span>'
+                    : '<span class="gw-pill gw-pill-muted">' + esc(r.status) + '</span>');
+                var setBtns = '<button class="gw-row-btn" title="Mark present" onclick="manualMark(' + r.student_id + ',\'Present\')">P</button>'
+                    + '<button class="gw-row-btn gw-danger" title="Mark absent" onclick="manualMark(' + r.student_id + ',\'Absent\')">A</button>';
+                html += '<tr><td>' + (i+1) + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.roll_no || '-') + '</td><td>' + esc(r.marked_at || '-') + '</td><td>' + pill + '</td><td>' + setBtns + '</td></tr>';
             });
-            $('#attendanceBody').html(html || '<tr><td colspan="5" class="text-center">No data</td></tr>');
+            $('#attendanceBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="6">No attendance recorded yet</td></tr>');
         });
     }
 
@@ -303,18 +500,21 @@
         var id = $('#addStuId').val().trim();
         var prn = $('#addStuPrn').val().trim();
         var roll = $('#addStuRoll').val().trim();
-        if (!name || !id) { alert('Name and Fingerprint ID are required'); return; }
+        if (!name || !id) { GW.toast('Name and Fingerprint ID are required', 'warning'); return; }
+        GW.btnLoading('#btnDoAddStudent', true, 'Adding...');
         $.post('/api/course/' + courseId + '/add_student', {name: name, id: id, prn: prn, roll_no: roll}, function(resp) {
+            GW.btnLoading('#btnDoAddStudent', false);
             if (resp.status === 'success') {
                 bootstrap.Modal.getInstance('#addStudentModal').hide();
                 $('#addStuName').val(''); $('#addStuId').val(''); $('#addStuPrn').val(''); $('#addStuRoll').val('');
-                showStatus('Student added: ' + name, 'success');
+                GW.toast('Student added: ' + name, 'success');
                 loadStudents();
             } else {
-                alert(resp.message || 'Failed to add student');
+                GW.toast(resp.message || 'Failed to add student', 'danger');
             }
         }).fail(function(xhr) {
-            alert(xhr.responseJSON ? xhr.responseJSON.message : 'Error adding student');
+            GW.btnLoading('#btnDoAddStudent', false);
+            GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Error adding student', 'danger');
         });
     });
     $('#btnDoRegister').click(function() {
@@ -323,7 +523,7 @@
         if (sid) registerStudent(parseInt(sid), name);
     });
     $('#batchSelect').change(loadStudents);
-    $('#sessionSelect').change(loadAttendance);
+    $('#sessionSelect').change(function() { updateTopicsBar(); loadAttendance(); });
     $('#btnExport').click(function() {
         var sid = $('#sessionSelect').val();
         if (sid) window.location.href = '/api/session/' + sid + '/export';
@@ -377,6 +577,184 @@
             updateEspStatus();
         });
     });
+
+    // ── Manual override ──
+    function manualMark(studentId, status) {
+        var sid = $('#sessionSelect').val();
+        if (!sid || sid === 'No sessions yet') { GW.toast('Select a session first', 'warning'); return; }
+        $.post('/api/session/' + sid + '/mark', {student_id: studentId, status: status}, function() {
+            loadAttendance();
+        }).fail(function() { GW.toast('Could not update', 'danger'); });
+    }
+    window.manualMark = manualMark;
+
+    $('#btnMarkAllPresent').click(function() {
+        var sid = $('#sessionSelect').val();
+        if (!sid || sid === 'No sessions yet') { GW.toast('Select a session first', 'warning'); return; }
+        GW.confirm({title:'Mark all present', message:'Set every student in this session to Present?', okText:'Mark all'})
+        .then(function(ok){ if(!ok) return;
+            $.post('/api/session/' + sid + '/mark_all', {status:'Present'}, function(){ GW.toast('All marked present','success'); loadAttendance(); });
+        });
+    });
+    $('#btnMarkAbsent').click(function() {
+        var sid = $('#sessionSelect').val();
+        if (!sid || sid === 'No sessions yet') { GW.toast('Select a session first', 'warning'); return; }
+        GW.confirm({title:'Mark remaining absent', message:'Set all un-marked students to Absent?', okText:'Mark absent', danger:true})
+        .then(function(ok){ if(!ok) return;
+            $.post('/api/session/' + sid + '/mark_all', {status:'Absent', only_unmarked:'1'}, function(){ GW.toast('Remaining marked absent','success'); loadAttendance(); });
+        });
+    });
+
+    // ── Bulk import ──
+    $('#btnImport').click(function() { $('#importResult').html(''); new bootstrap.Modal('#importModal').show(); });
+    $('#btnDoImport').click(function() {
+        var file = $('#importFile')[0].files[0];
+        if (!file) { GW.toast('Choose a CSV file', 'warning'); return; }
+        var fd = new FormData(); fd.append('file', file);
+        GW.btnLoading('#btnDoImport', true, 'Uploading...');
+        $.ajax({ url: '/api/course/' + courseId + '/import_students', method: 'POST', data: fd,
+            processData: false, contentType: false,
+            success: function(r) {
+                GW.btnLoading('#btnDoImport', false);
+                var msg = r.added + ' added, ' + r.linked + ' linked to course';
+                $('#importResult').html('<div class="text-success">' + msg + '</div>' +
+                    (r.errors && r.errors.length ? '<div class="text-danger mt-1">' + r.errors.map(esc).join('<br>') + '</div>' : ''));
+                GW.toast(msg, 'success');
+                loadStudents();
+            },
+            error: function(xhr) {
+                GW.btnLoading('#btnDoImport', false);
+                GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Import failed', 'danger');
+            }
+        });
+    });
+
+    // ── Reports ──
+    var lastReport = [];
+    function reportParams() {
+        var p = {};
+        if ($('#repStart').val()) p.start = $('#repStart').val();
+        if ($('#repEnd').val()) p.end = $('#repEnd').val();
+        p.threshold = $('#repThreshold').val() || 75;
+        return p;
+    }
+    function renderReport() {
+        var only = $('#repDefaultersOnly').is(':checked');
+        var html = '';
+        lastReport.forEach(function(r) {
+            if (only && !r.defaulter) return;
+            var pill = r.defaulter ? '<span class="gw-pill gw-pill-danger">Defaulter</span>' : '<span class="gw-pill gw-pill-success">OK</span>';
+            html += '<tr><td>' + esc(r.roll_no || '-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.prn || '-') + '</td><td>' + r.held + '</td><td>' + r.present + '</td><td>' + r.absent + '</td><td>' + r.percent + '%</td><td>' + pill + '</td></tr>';
+        });
+        $('#reportBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="8">No data</td></tr>');
+        GW.enhanceTable('#reportTable', { search: '#repSearch', countEl: '#repCount' });
+    }
+    function runReport() {
+        $.get('/api/course/' + courseId + '/report', reportParams(), function(d) {
+            lastReport = d.students || [];
+            $('#repSummary').text(d.total_sessions + ' sessions · ' + d.defaulter_count + ' defaulters (below ' + d.threshold + '%)');
+            renderReport();
+        }).fail(function() { GW.toast('Could not generate report', 'danger'); });
+    }
+    $('#btnReport').click(function() { new bootstrap.Modal('#reportModal').show(); runReport(); });
+    $('#btnRunReport').click(runReport);
+    $('#repDefaultersOnly').change(renderReport);
+    $('#btnExportReport').click(function() {
+        var p = reportParams();
+        var qs = Object.keys(p).map(function(k){ return k + '=' + encodeURIComponent(p[k]); }).join('&');
+        window.location.href = '/api/course/' + courseId + '/report/export?' + qs;
+    });
+
+    // ── Grades ──
+    function loadGrades() {
+        $.get('/api/course/' + courseId + '/grades', function(rows) {
+            // Build student dropdown from unique students
+            var seen = {}, opts = '';
+            rows.forEach(function(r) {
+                if (!seen[r.student_id]) {
+                    seen[r.student_id] = true;
+                    opts += '<option value="' + r.student_id + '">' + esc(r.name) + ' (' + esc(r.roll_no || r.student_id) + ')</option>';
+                }
+            });
+            $('#grStudent').html(opts || '<option value="">No students</option>');
+
+            // Keep graded rows in gradeRows; row buttons reference them by index (no user text in inline JS).
+            gradeRows = rows.filter(function(r) { return !!r.component; });
+            var html = '', graded = {};
+            gradeRows.forEach(function(r, i) {
+                graded[r.student_id] = true;
+                var score = (r.score === null ? '-' : r.score) + (r.max_score ? ' / ' + r.max_score : '');
+                var edit = '<button class="gw-row-btn js-grade-edit" data-idx="' + i + '">Edit</button>';
+                var del = r.grade_id ? '<button class="gw-row-btn gw-danger js-grade-delete" data-idx="' + i + '">Delete</button>' : '';
+                html += '<tr><td>' + esc(r.roll_no || '-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.component) + '</td><td>' + esc(score) + '</td><td>' + esc(r.grade || '-') + '</td><td>' + esc(r.remarks || '') + '</td><td>' + edit + ' ' + del + '</td></tr>';
+            });
+            $('#gradesBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="7">No grades entered yet</td></tr>');
+            $('#grCount').text(gradeRows.length + ' entries');
+            GW.enhanceTable('#gradesTable', { search: '#grSearch', countEl: '#grCount' });
+            var nStudents = Object.keys(seen).length;
+            $('#gradesSummary').text(gradeRows.length + ' grade entr' + (gradeRows.length === 1 ? 'y' : 'ies')
+                + ' for ' + Object.keys(graded).length + ' of ' + nStudents + ' student' + (nStudents === 1 ? '' : 's'));
+        }).fail(function(xhr) {
+            $('#gradesSummary').text('Could not load grades');
+            GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not load grades', 'danger');
+        });
+    }
+
+    function openGrades() { new bootstrap.Modal('#gradesModal').show(); loadGrades(); }
+
+    $('#gradesBody').on('click', '.js-grade-edit', function() {
+        var r = gradeRows[$(this).data('idx')];
+        if (!r) return;
+        $('#grStudent').val(r.student_id);
+        $('#grComponent').val(r.component);
+        $('#grScore').val(r.score === null ? '' : r.score);
+        $('#grMax').val(r.max_score || 100);
+        $('#grLetter').val(r.grade || '');
+        $('#grRemarks').val(r.remarks || '');
+        $('#grComponent').focus();
+    });
+
+    $('#gradesBody').on('click', '.js-grade-delete', function() {
+        var r = gradeRows[$(this).data('idx')];
+        if (!r || !r.grade_id) return;
+        GW.confirm({ title: 'Delete grade', message: 'Remove this grade entry?', okText: 'Delete', danger: true })
+        .then(function(ok) {
+            if (!ok) return;
+            $.ajax({ url: '/api/grades/' + r.grade_id, method: 'DELETE', success: function() {
+                GW.toast('Grade deleted', 'success'); loadGrades();
+            }, error: function(xhr) {
+                GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not delete', 'danger');
+            } });
+        });
+    });
+
+    $('#btnSaveGrade').click(function() {
+        var sid = $('#grStudent').val();
+        var component = $('#grComponent').val().trim();
+        if (!sid || !component) { GW.toast('Pick a student and enter a component name', 'warning'); return; }
+        var maxVal = parseFloat($('#grMax').val() || '100');
+        var scoreRaw = $('#grScore').val();
+        if (!(maxVal > 0)) { GW.toast('Max score must be greater than 0', 'warning'); return; }
+        if (scoreRaw !== '' && (parseFloat(scoreRaw) < 0 || parseFloat(scoreRaw) > maxVal)) {
+            GW.toast('Score must be between 0 and the max score (' + maxVal + ')', 'warning'); return;
+        }
+        GW.btnLoading('#btnSaveGrade', true, 'Saving...');
+        $.post('/api/course/' + courseId + '/grades', {
+            student_id: sid, component: component,
+            score: $('#grScore').val(), max_score: $('#grMax').val() || 100,
+            grade: $('#grLetter').val().trim(), remarks: $('#grRemarks').val().trim()
+        }, function() {
+            GW.btnLoading('#btnSaveGrade', false);
+            GW.toast('Grade saved', 'success');
+            $('#grComponent').val(''); $('#grScore').val(''); $('#grLetter').val(''); $('#grRemarks').val('');
+            loadGrades();
+        }).fail(function(xhr) {
+            GW.btnLoading('#btnSaveGrade', false);
+            GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not save grade', 'danger');
+        });
+    });
+
+    $('#btnGrades, #btnManageGrades').click(openGrades);
 
     loadCourse();
     </script>

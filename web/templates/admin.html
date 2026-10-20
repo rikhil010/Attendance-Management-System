@@ -5,13 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>GWASOAT - Admin</title>
     <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
     <style>
-        body { background-color: #f6f8fa; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; }
         .navbar { background-color: #ffffff; border-bottom: 1px solid #d1d9e0; }
         .navbar-brand { color: #0366d6 !important; font-weight: bold; }
         .nav-link { color: #586069 !important; }
         .card { border: 1px solid #d1d9e0; border-radius: 6px; }
-        .nav-pills .nav-link.active { background: #0366d6; }
+        .nav-pills .nav-link.active { background: #0366d6; color: #ffffff !important; }
         .nav-pills .nav-link { color: #24292e; }
     </style>
 </head>
@@ -30,6 +30,8 @@
             <li class="nav-item"><a class="nav-link" data-tab="classes" href="#">Classes</a></li>
             <li class="nav-item"><a class="nav-link" data-tab="courses" href="#">Courses</a></li>
             <li class="nav-item"><a class="nav-link" data-tab="students" href="#">Students</a></li>
+            <li class="nav-item"><a class="nav-link" data-tab="timetable" href="#">Timetable</a></li>
+            <li class="nav-item"><a class="nav-link" data-tab="audit" href="#">Activity Log</a></li>
         </ul>
 
         <div class="card p-3" id="tabContent">Loading...</div>
@@ -37,8 +39,31 @@
 
     <script src="/static/js/jquery-3.6.0.min.js"></script>
     <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/app.js"></script>
     <script>
     var currentTab = 'teachers';
+
+    function esc(s) {
+        if (s === null || s === undefined) return '';
+        return String(s).replace(/[&<>"']/g, function(c) {
+            return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+        });
+    }
+
+    var TABLE_DEFS = {
+        teachers:    ['Name', 'Email', 'Role'],
+        departments: ['Name'],
+        classes:     ['Name', 'Year', 'Dept', 'Batches'],
+        courses:     ['Code', 'Name', 'Teacher', 'Students'],
+        students:    ['ID', 'PRN', 'Roll', 'Name', 'Class', 'Batch', 'FP', 'Login']
+    };
+
+    // Proper singular labels per tab (avoids "Classe" from a naive /s$/ strip).
+    var SINGULAR = {
+        teachers: 'Teacher', departments: 'Department', classes: 'Class',
+        courses: 'Course', students: 'Student', timetable: 'Timetable'
+    };
+    function singular(tab) { return SINGULAR[tab] || tab.replace(/s$/, ''); }
 
     function showTab(tab) {
         currentTab = tab;
@@ -48,51 +73,72 @@
     }
 
     function loadTabData(tab) {
+        $('#tabContent').html('<div class="text-muted p-3">Loading...</div>');
+        if (tab === 'audit') { return loadAudit(); }
+        if (tab === 'timetable') { return loadTimetable(); }
         $.get('/api/admin/' + tab, function(data) {
-            var html = buildTable(tab, data);
-            $('#tabContent').html(html);
+            $('#tabContent').html(buildTable(tab, data));
+            GW.enhanceTable('#adminTable', { search: '#adminSearch', countEl: '#adminCount' });
+            $('#adminCount').text(data.length + ' total');
+        }).fail(function() {
+            GW.toast('Could not load ' + tab, 'danger');
+            $('#tabContent').html('<div class="text-muted p-3">Failed to load.</div>');
         });
     }
 
+    function rowActions(tab, r) {
+        var html = '';
+        if (tab === 'classes') html += '<button class="gw-row-btn" onclick="manageBatches(' + r.id + ',\'' + esc(r.name) + '\')">Batches</button>';
+        if (tab === 'courses') html += '<button class="gw-row-btn" onclick="manageCourseStudents(' + r.id + ')">Students</button>';
+        if (tab === 'students' || tab === 'courses' || tab === 'classes') {
+            html += '<button class="gw-row-btn" onclick="editItem(\'' + tab + '\',' + r.id + ')">Edit</button>';
+        }
+        if (tab === 'students') {
+            html += '<button class="gw-row-btn" onclick="resetStudentPassword(' + r.id + ')">Reset PW</button>';
+        }
+        if (tab === 'teachers' && r.role === 'teacher') {
+            html += '<button class="gw-row-btn" onclick="resetTeacherPassword(' + r.id + ')">Reset PW</button>';
+        }
+        html += '<button class="gw-row-btn gw-danger" onclick="deleteItem(\'' + tab + '\',' + r.id + ')">Delete</button>';
+        return html;
+    }
+
     function buildTable(tab, data) {
-        var html = '<div class="d-flex justify-content-between mb-3"><h5>' + tab.charAt(0).toUpperCase() + tab.slice(1) + '</h5>';
-        html += '<button class="btn btn-primary btn-sm" onclick="addItem(\'' + tab + '\')">+ Add</button></div>';
-        
-        if (tab === 'teachers') {
-            html += '<table class="table table-sm"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead><tbody>';
+        var title = tab.charAt(0).toUpperCase() + tab.slice(1);
+        var cols = TABLE_DEFS[tab] || [];
+        var html = '<div class="d-flex justify-content-between align-items-center mb-3">';
+        html += '<h5 class="mb-0">' + title + '</h5>';
+        html += '<button class="btn btn-primary btn-sm" onclick="addItem(\'' + tab + '\')">+ Add ' + singular(tab) + '</button></div>';
+
+        html += '<div class="gw-table-wrap">';
+        html += '<div class="gw-table-toolbar"><input class="gw-table-search" id="adminSearch" placeholder="Search ' + tab + '...">';
+        html += '<span class="gw-table-count" id="adminCount"></span></div>';
+        html += '<div style="max-height:65vh;overflow:auto"><table class="gw-table" id="adminTable"><thead><tr>';
+        cols.forEach(function(c) { html += '<th>' + c + '</th>'; });
+        html += '<th data-gw-no-sort>Actions</th></tr></thead><tbody>';
+
+        if (!data.length) {
+            html += '<tr data-gw-empty><td class="gw-empty" colspan="' + (cols.length + 1) + '">No ' + tab + ' yet. Click \u201c+ Add\u201d to create one.</td></tr>';
+        } else {
             data.forEach(function(r) {
-                html += '<tr><td>' + r.name + '</td><td>' + r.email + '</td><td>' + r.role + '</td>';
-                html += '<td><button class="btn btn-link btn-sm" onclick="deleteItem(\'teachers\',' + r.id + ')">Delete</button></td></tr>';
-            });
-        } else if (tab === 'departments') {
-            html += '<table class="table table-sm"><thead><tr><th>Name</th><th>Actions</th></tr></thead><tbody>';
-            data.forEach(function(r) {
-                html += '<tr><td>' + r.name + '</td>';
-                html += '<td><button class="btn btn-link btn-sm" onclick="deleteItem(\'departments\',' + r.id + ')">Delete</button></td></tr>';
-            });
-        } else if (tab === 'classes') {
-            html += '<table class="table table-sm"><thead><tr><th>Name</th><th>Year</th><th>Dept</th><th>Batches</th><th>Actions</th></tr></thead><tbody>';
-            data.forEach(function(r) {
-                html += '<tr><td>' + r.name + '</td><td>' + (r.year||'-') + '</td><td>' + (r.dept_name||'-') + '</td><td>' + (r.batches||'') + '</td>';
-                html += '<td><button class="btn btn-link btn-sm" onclick="manageBatches(' + r.id + ',\'' + r.name + '\')">Batches</button> ';
-                html += '<button class="btn btn-link btn-sm" onclick="deleteItem(\'classes\',' + r.id + ')">Delete</button></td></tr>';
-            });
-        } else if (tab === 'courses') {
-            html += '<table class="table table-sm"><thead><tr><th>Code</th><th>Name</th><th>Teacher</th><th>Students</th><th>Actions</th></tr></thead><tbody>';
-            data.forEach(function(r) {
-                html += '<tr><td>' + (r.code||'-') + '</td><td>' + r.name + '</td><td>' + (r.teacher_name||'Unassigned') + '</td><td>' + r.student_count + '</td>';
-                html += '<td><button class="btn btn-link btn-sm" onclick="manageCourseStudents(' + r.id + ')">Students</button> ';
-                html += '<button class="btn btn-link btn-sm" onclick="deleteItem(\'courses\',' + r.id + ')">Delete</button></td></tr>';
-            });
-        } else if (tab === 'students') {
-            html += '<table class="table table-sm"><thead><tr><th>ID</th><th>PRN</th><th>Roll</th><th>Name</th><th>Class</th><th>Batch</th><th>FP</th><th>Actions</th></tr></thead><tbody>';
-            data.forEach(function(r) {
-                html += '<tr><td>' + r.id + '</td><td>' + (r.prn||'-') + '</td><td>' + (r.roll_no||'-') + '</td><td>' + r.name + '</td><td>' + (r.class_name||'-') + '</td><td>' + (r.batch_name||'-') + '</td>';
-                html += '<td>' + (r.registered ? '✓' : '✗') + '</td>';
-                html += '<td><button class="btn btn-link btn-sm" onclick="deleteItem(\'students\',' + r.id + ')">Delete</button></td></tr>';
+                html += '<tr>';
+                if (tab === 'teachers') {
+                    html += '<td>' + esc(r.name) + '</td><td>' + esc(r.email) + '</td><td><span class="gw-pill gw-pill-' + (r.role === 'admin' ? 'info' : 'muted') + '">' + esc(r.role) + '</span></td>';
+                } else if (tab === 'departments') {
+                    html += '<td>' + esc(r.name) + '</td>';
+                } else if (tab === 'classes') {
+                    html += '<td>' + esc(r.name) + '</td><td>' + esc(r.year||'-') + '</td><td>' + esc(r.dept_name||'-') + '</td><td>' + esc(r.batches||'-') + '</td>';
+                } else if (tab === 'courses') {
+                    html += '<td>' + esc(r.code||'-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.teacher_name||'Unassigned') + '</td><td>' + esc(r.student_count) + '</td>';
+                } else if (tab === 'students') {
+                    var fp = r.registered ? '<span class="gw-pill gw-pill-success">Registered</span>' : '<span class="gw-pill gw-pill-danger">Not set</span>';
+                    var login = r.login_email ? '<span class="gw-pill gw-pill-info" title="' + esc(r.login_email) + '">Account</span>' : '<span class="gw-pill gw-pill-muted">None</span>';
+                    html += '<td>' + esc(r.id) + '</td><td>' + esc(r.prn||'-') + '</td><td>' + esc(r.roll_no||'-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.class_name||'-') + '</td><td>' + esc(r.batch_name||'-') + '</td><td>' + fp + '</td><td>' + login + '</td>';
+                }
+                html += '<td>' + rowActions(tab, r) + '</td></tr>';
             });
         }
-        html += '</tbody></table>';
+        html += '</tbody></table></div></div>';
         return html;
     }
 
@@ -103,28 +149,34 @@
         else if (tab === 'classes') { fields = {name:'Class Name',year:'Year'}; }
         else if (tab === 'courses') { fields = {name:'Course Name',code:'Code'}; }
         else if (tab === 'students') { fields = {name:'Student Name',prn:'PRN',roll_no:'Roll No',id:'Fingerprint ID'}; }
-        
-        var html = '';
+
+        var html = '<h6 class="mb-3">Add ' + singular(tab) + '</h6>';
         Object.keys(fields).forEach(function(k) {
-            html += fields[k] + ': <input class="form-control form-control-sm mb-2" id="add_' + k + '" placeholder="' + fields[k] + '">';
+            var type = (k === 'password') ? 'password' : (k === 'id' ? 'number' : 'text');
+            html += '<label class="form-label small mb-1">' + fields[k] + '</label>';
+            html += '<input type="' + type + '" class="form-control form-control-sm mb-2" id="add_' + k + '" placeholder="' + fields[k] + '">';
         });
-        
         if (tab === 'classes') {
-            html += 'Department: <select class="form-select form-select-sm mb-2" id="add_department_id"><option value="">None</option></select>';
-            $.get('/api/admin/departments', function(depts) { depts.forEach(function(d) { $('#add_department_id').append('<option value="'+d.id+'">'+d.name+'</option>'); }); });
+            html += '<label class="form-label small mb-1">Department</label><select class="form-select form-select-sm mb-2" id="add_department_id"><option value="">None</option></select>';
+            $.get('/api/admin/departments', function(depts) { depts.forEach(function(d) { $('#add_department_id').append('<option value="'+d.id+'">'+esc(d.name)+'</option>'); }); });
         }
         if (tab === 'courses') {
-            html += 'Teacher: <select class="form-select form-select-sm mb-2" id="add_teacher_id"><option value="">Unassigned</option></select>';
-            $.get('/api/admin/teachers', function(ts) { ts.forEach(function(t) { $('#add_teacher_id').append('<option value="'+t.id+'">'+t.name+'</option>'); }); });
+            html += '<label class="form-label small mb-1">Teacher</label><select class="form-select form-select-sm mb-2" id="add_teacher_id"><option value="">Unassigned</option></select>';
+            $.get('/api/admin/teachers', function(ts) {
+                ts.filter(function(t){ return t.role === 'teacher'; }).forEach(function(t) {
+                    $('#add_teacher_id').append('<option value="'+t.id+'">'+esc(t.name)+'</option>');
+                });
+            });
         }
         if (tab === 'students') {
-            html += 'Class: <select class="form-select form-select-sm mb-2" id="add_class_id"><option value="">None</option></select>';
-            $.get('/api/admin/classes', function(cs) { cs.forEach(function(c) { $('#add_class_id').append('<option value="'+c.id+'">'+c.name+'</option>'); }); });
+            html += '<label class="form-label small mb-1">Class</label><select class="form-select form-select-sm mb-2" id="add_class_id"><option value="">None</option></select>';
+            $.get('/api/admin/classes', function(cs) { cs.forEach(function(c) { $('#add_class_id').append('<option value="'+c.id+'">'+esc(c.name)+'</option>'); }); });
         }
-        
-        if (confirm('Add new item?')) {
-            $('#tabContent').prepend('<div class="card p-3 mb-3" id="addForm">' + html + '<button class="btn btn-primary btn-sm" onclick="submitAdd(\'' + tab + '\')">Save</button> <button class="btn btn-secondary btn-sm" onclick="$(\'#addForm\').remove()">Cancel</button></div>');
-        }
+
+        if ($('#addForm').length) $('#addForm').remove();
+        $('#tabContent').prepend('<div class="card p-3 mb-3" id="addForm">' + html +
+            '<div class="mt-2"><button class="btn btn-primary btn-sm" id="addSaveBtn" onclick="submitAdd(\'' + tab + '\')">Save</button> ' +
+            '<button class="btn btn-outline-secondary btn-sm" onclick="$(\'#addForm\').remove()">Cancel</button></div></div>');
     }
 
     function submitAdd(tab) {
@@ -133,26 +185,205 @@
             var key = this.id.replace('add_', '');
             if (this.value) data[key] = this.value;
         });
+        GW.btnLoading('#addSaveBtn', true, 'Saving...');
         $.post('/api/admin/' + tab, data, function() {
             $('#addForm').remove();
+            GW.toast(singular(tab) + ' added', 'success');
             loadTabData(tab);
-        }).fail(function(xhr) { alert(xhr.responseJSON ? xhr.responseJSON.message : 'Error'); });
+        }).fail(function(xhr) {
+            GW.btnLoading('#addSaveBtn', false);
+            GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not save', 'danger');
+        });
     }
 
     function deleteItem(tab, id) {
-        if (!confirm('Delete this item?')) return;
-        $.ajax({ url: '/api/admin/' + tab + '/' + id, method: 'DELETE', success: function() { loadTabData(tab); }});
+        GW.confirm({ title: 'Delete ' + singular(tab), message: 'This cannot be undone. Continue?', okText: 'Delete', danger: true })
+        .then(function(ok) {
+            if (!ok) return;
+            $.ajax({ url: '/api/admin/' + tab + '/' + id, method: 'DELETE',
+                success: function() { GW.toast('Deleted', 'success'); loadTabData(tab); },
+                error: function(xhr) { GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not delete', 'danger'); }
+            });
+        });
     }
 
     function manageBatches(classId, className) {
-        var batchName = prompt('Add batch to ' + className + ':');
-        if (batchName) {
-            $.post('/api/admin/batches', {name: batchName, class_id: classId}, function() { loadTabData('classes'); });
-        }
+        GW.prompt({ title: 'Add batch', message: 'New batch for ' + className, placeholder: 'e.g. Batch A1' })
+        .then(function(name) {
+            if (!name) return;
+            $.post('/api/admin/batches', {name: name, class_id: classId}, function() {
+                GW.toast('Batch added to ' + className, 'success');
+                loadTabData('classes');
+            }).fail(function(xhr) { GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not add batch', 'danger'); });
+        });
     }
 
     function manageCourseStudents(courseId) {
         window.location.href = '/admin/course/' + courseId + '/students';
+    }
+
+    function resetStudentPassword(sid) {
+        GW.confirm({ title: 'Reset student password',
+            message: 'Reset this student\u2019s login password to the default?', okText: 'Reset' })
+        .then(function(ok) {
+            if (!ok) return;
+            $.post('/api/admin/students/' + sid + '/reset_password', function(r) {
+                GW.toast('Login: ' + r.email + '  ·  Password: ' + r.password, 'success', { duration: 9000 });
+                loadTabData('students');
+            }).fail(function(xhr) {
+                GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not reset password', 'danger');
+            });
+        });
+    }
+    window.resetStudentPassword = resetStudentPassword;
+
+    function resetTeacherPassword(uid) {
+        GW.confirm({ title: 'Reset teacher password',
+            message: 'Reset this teacher\u2019s login password to the default (teacher123)?', okText: 'Reset' })
+        .then(function(ok) {
+            if (!ok) return;
+            $.post('/api/admin/teachers/' + uid + '/reset_password', function(r) {
+                GW.toast('Login: ' + r.email + '  ·  Password: ' + r.password, 'success', { duration: 9000 });
+                loadTabData('teachers');
+            }).fail(function(xhr) {
+                GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not reset password', 'danger');
+            });
+        });
+    }
+    window.resetTeacherPassword = resetTeacherPassword;
+
+    // ── Edit ──
+    function editItem(tab, id) {
+        $.get('/api/admin/' + tab, function(rows) {
+            var r = rows.filter(function(x){ return x.id === id; })[0];
+            if (!r) { GW.toast('Item not found', 'danger'); return; }
+            var fields = {};
+            if (tab === 'students') fields = {name:'Name', prn:'PRN', roll_no:'Roll No'};
+            else if (tab === 'courses') fields = {name:'Course Name', code:'Code'};
+            else if (tab === 'classes') fields = {name:'Class Name', year:'Year'};
+            var html = '<h6 class="mb-3">Edit ' + singular(tab) + '</h6>';
+            Object.keys(fields).forEach(function(k) {
+                html += '<label class="form-label small mb-1">' + fields[k] + '</label>';
+                html += '<input class="form-control form-control-sm mb-2" id="edit_' + k + '" value="' + esc(r[k] || '') + '">';
+            });
+            if (tab === 'students') {
+                html += '<label class="form-label small mb-1">Class</label><select class="form-select form-select-sm mb-2" id="edit_class_id"><option value="">None</option></select>';
+                html += '<label class="form-label small mb-1">Batch</label><select class="form-select form-select-sm mb-2" id="edit_batch_id"><option value="">None</option></select>';
+            }
+            if (tab === 'courses') {
+                html += '<label class="form-label small mb-1">Teacher</label><select class="form-select form-select-sm mb-2" id="edit_teacher_id"><option value="">Unassigned</option></select>';
+            }
+            if ($('#editForm').length) $('#editForm').remove();
+            $('#tabContent').prepend('<div class="card p-3 mb-3" id="editForm">' + html +
+                '<div class="mt-2"><button class="btn btn-primary btn-sm" id="editSaveBtn" onclick="submitEdit(\'' + tab + '\',' + id + ')">Save</button> ' +
+                '<button class="btn btn-outline-secondary btn-sm" onclick="$(\'#editForm\').remove()">Cancel</button></div></div>');
+            if (tab === 'students') {
+                $.get('/api/admin/classes', function(cs) {
+                    cs.forEach(function(c){ $('#edit_class_id').append('<option value="'+c.id+'"'+(c.id===r.class_id?' selected':'')+'>'+esc(c.name)+'</option>'); });
+                    loadBatchOptions(r.class_id, r.batch_id);
+                });
+                $('#edit_class_id').change(function(){ loadBatchOptions($(this).val(), null); });
+            }
+            if (tab === 'courses') {
+                $.get('/api/admin/teachers', function(ts) {
+                    ts.filter(function(t){ return t.role === 'teacher'; }).forEach(function(t){
+                        $('#edit_teacher_id').append('<option value="'+t.id+'"'+(t.id===r.teacher_id?' selected':'')+'>'+esc(t.name)+'</option>');
+                    });
+                });
+            }
+        });
+    }
+    function loadBatchOptions(classId, selectedBatch) {
+        $('#edit_batch_id').html('<option value="">None</option>');
+        if (!classId) return;
+        $.get('/api/admin/classes/' + classId + '/batches', function(bs) {
+            bs.forEach(function(b){ $('#edit_batch_id').append('<option value="'+b.id+'"'+(String(b.id)===String(selectedBatch)?' selected':'')+'>'+esc(b.name)+'</option>'); });
+        });
+    }
+    function submitEdit(tab, id) {
+        var data = {};
+        $('#editForm input, #editForm select').each(function() { data[this.id.replace('edit_', '')] = this.value; });
+        GW.btnLoading('#editSaveBtn', true, 'Saving...');
+        $.post('/api/admin/' + tab + '/' + id + '/edit', data, function() {
+            $('#editForm').remove();
+            GW.toast('Saved', 'success');
+            loadTabData(tab);
+        }).fail(function(xhr) {
+            GW.btnLoading('#editSaveBtn', false);
+            GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not save', 'danger');
+        });
+    }
+
+    // ── Timetable ──
+    function loadTimetable() {
+        $.get('/api/admin/timetable', function(data) {
+            var html = '<div class="d-flex justify-content-between align-items-center mb-3"><h5 class="mb-0">Timetable</h5>';
+            html += '<button class="btn btn-primary btn-sm" onclick="addTimetable()">+ Add Slot</button></div>';
+            html += '<div class="gw-table-wrap"><div class="gw-table-toolbar"><input class="gw-table-search" id="adminSearch" placeholder="Search timetable..."><span class="gw-table-count" id="adminCount"></span></div>';
+            html += '<div style="max-height:65vh;overflow:auto"><table class="gw-table" id="adminTable"><thead><tr><th>Day</th><th>Time</th><th>Course</th><th>Teacher</th><th>Room</th><th data-gw-no-sort>Actions</th></tr></thead><tbody>';
+            if (!data.length) {
+                html += '<tr data-gw-empty><td class="gw-empty" colspan="6">No timetable slots yet.</td></tr>';
+            } else {
+                data.forEach(function(r) {
+                    html += '<tr><td>' + esc(r.day_name) + '</td><td>' + esc(r.start_time) + (r.end_time ? '–' + esc(r.end_time) : '') + '</td><td>' + esc((r.code ? r.code + ' - ' : '') + (r.course_name || '')) + '</td><td>' + esc(r.teacher_name || '-') + '</td><td>' + esc(r.room || '-') + '</td>';
+                    html += '<td><button class="gw-row-btn gw-danger" onclick="deleteTimetable(' + r.id + ')">Delete</button></td></tr>';
+                });
+            }
+            html += '</tbody></table></div></div>';
+            $('#tabContent').html(html);
+            GW.enhanceTable('#adminTable', { search: '#adminSearch', countEl: '#adminCount' });
+            $('#adminCount').text(data.length + ' slots');
+        });
+    }
+    function addTimetable() {
+        var days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+        var html = '<h6 class="mb-3">Add Timetable Slot</h6>';
+        html += '<label class="form-label small mb-1">Course</label><select class="form-select form-select-sm mb-2" id="tt_course_id"></select>';
+        html += '<label class="form-label small mb-1">Day</label><select class="form-select form-select-sm mb-2" id="tt_day_of_week">';
+        days.forEach(function(d, i){ html += '<option value="' + i + '">' + d + '</option>'; });
+        html += '</select>';
+        html += '<label class="form-label small mb-1">Start time</label><input type="time" class="form-control form-control-sm mb-2" id="tt_start_time">';
+        html += '<label class="form-label small mb-1">End time</label><input type="time" class="form-control form-control-sm mb-2" id="tt_end_time">';
+        html += '<label class="form-label small mb-1">Room</label><input class="form-control form-control-sm mb-2" id="tt_room" placeholder="e.g. Lab 3">';
+        if ($('#addForm').length) $('#addForm').remove();
+        $('#tabContent').prepend('<div class="card p-3 mb-3" id="addForm">' + html +
+            '<div class="mt-2"><button class="btn btn-primary btn-sm" id="ttSaveBtn" onclick="submitTimetable()">Save</button> ' +
+            '<button class="btn btn-outline-secondary btn-sm" onclick="$(\'#addForm\').remove()">Cancel</button></div></div>');
+        $.get('/api/admin/courses', function(cs) { cs.forEach(function(c){ $('#tt_course_id').append('<option value="'+c.id+'">'+esc((c.code?c.code+' - ':'')+c.name)+'</option>'); }); });
+    }
+    function submitTimetable() {
+        var data = { course_id: $('#tt_course_id').val(), day_of_week: $('#tt_day_of_week').val(),
+            start_time: $('#tt_start_time').val(), end_time: $('#tt_end_time').val(), room: $('#tt_room').val() };
+        if (!data.course_id || !data.start_time) { GW.toast('Course and start time required', 'warning'); return; }
+        GW.btnLoading('#ttSaveBtn', true, 'Saving...');
+        $.post('/api/admin/timetable', data, function() { $('#addForm').remove(); GW.toast('Slot added', 'success'); loadTimetable(); })
+        .fail(function(xhr){ GW.btnLoading('#ttSaveBtn', false); GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not save', 'danger'); });
+    }
+    function deleteTimetable(id) {
+        GW.confirm({title:'Delete slot', message:'Remove this timetable slot?', okText:'Delete', danger:true}).then(function(ok){
+            if (!ok) return;
+            $.ajax({url:'/api/admin/timetable/'+id, method:'DELETE', success:function(){ GW.toast('Deleted','success'); loadTimetable(); }});
+        });
+    }
+
+    // ── Activity log ──
+    function loadAudit() {
+        $.get('/api/admin/audit', function(data) {
+            var html = '<h5 class="mb-3">Activity Log</h5>';
+            html += '<div class="gw-table-wrap"><div class="gw-table-toolbar"><input class="gw-table-search" id="adminSearch" placeholder="Search activity..."><span class="gw-table-count" id="adminCount"></span></div>';
+            html += '<div style="max-height:70vh;overflow:auto"><table class="gw-table" id="adminTable"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+            if (!data.length) {
+                html += '<tr data-gw-empty><td class="gw-empty" colspan="4">No activity recorded yet.</td></tr>';
+            } else {
+                data.forEach(function(r) {
+                    html += '<tr><td>' + esc(r.created_at) + '</td><td>' + esc(r.user_name || '-') + '</td><td><span class="gw-pill gw-pill-info">' + esc(r.action) + '</span></td><td>' + esc(r.details || '') + '</td></tr>';
+                });
+            }
+            html += '</tbody></table></div></div>';
+            $('#tabContent').html(html);
+            GW.enhanceTable('#adminTable', { search: '#adminSearch', countEl: '#adminCount' });
+            $('#adminCount').text(data.length + ' entries');
+        });
     }
 
     $('#adminTabs .nav-link').click(function(e) { e.preventDefault(); showTab($(this).data('tab')); });

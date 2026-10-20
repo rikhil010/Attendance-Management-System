@@ -20,5 +20,11 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# Microsoft Office temporary lock files
+~$*
+
+# Internal agent tooling
+.agents/
+
 # Build history
 .history/

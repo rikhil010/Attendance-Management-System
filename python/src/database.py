@@ -1,106 +1,135 @@
 """
-Database module for GWASOAT.
+Database module for GWASOAT — MySQL backend.
 Handles all database operations and initialization.
 """
 
-import sqlite3
+import mysql.connector
+from mysql.connector import IntegrityError
+
+DB_CONFIG = {
+    'host':     'localhost',
+    'port':     3306,
+    'database': 'gwasoat',
+    'user':     'gwasoat_user',
+    'password': 'gwasoat_pass_2026',
+    'charset':  'utf8mb4',
+    'use_pure': True,
+}
 
 
 def get_db():
-    """Get database connection with row factory."""
-    import os
-    db_path = os.path.join(os.path.dirname(__file__), '../../data/attendance.db')
-    db = sqlite3.connect(db_path)
-    db.row_factory = sqlite3.Row
-    return db
+    """Return a new MySQL connection."""
+    return mysql.connector.connect(**DB_CONFIG)
 
 
-def ensure_column(db, table_name, column_name, definition):
-    """Add column to table if it doesn't exist."""
-    cursor = db.execute(f"PRAGMA table_info({table_name})")
-    cols = [row[1] for row in cursor.fetchall()]
-    if column_name not in cols:
-        db.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {definition}")
+# ── Internal helpers ──────────────────────────────────────────────────────────
 
+def _fetchall(db, sql, params=()):
+    cur = db.cursor(dictionary=True)
+    cur.execute(sql, params)
+    rows = cur.fetchall()
+    cur.close()
+    return rows
+
+
+def _fetchone(db, sql, params=()):
+    cur = db.cursor(dictionary=True)
+    cur.execute(sql, params)
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+
+def _execute(db, sql, params=()):
+    cur = db.cursor()
+    cur.execute(sql, params)
+    lastrowid = cur.lastrowid
+    cur.close()
+    return lastrowid
+
+
+# ── Schema init (legacy — main schema lives in models.py) ────────────────────
 
 def initialize_database():
-    """Initialize database schema."""
+    """Ensure legacy tables exist. Main schema is handled by models.py."""
     db = get_db()
-    
-    # Create tables
-    db.execute('''CREATE TABLE IF NOT EXISTS classes (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT UNIQUE)''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS students (
-                    id INTEGER PRIMARY KEY,
-                    name TEXT,
-                    class_id INTEGER,
-                    registered INTEGER NOT NULL DEFAULT 0)''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS attendance_records (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER,
-                    class_id INTEGER NOT NULL,
-                    student_id INTEGER NOT NULL,
-                    student_name TEXT NOT NULL,
-                    fingerprint_time TEXT,
-                    recorded_at TEXT NOT NULL)''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS attendance_sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    class_id INTEGER NOT NULL,
-                    started_at TEXT NOT NULL,
-                    ended_at TEXT)''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS session_attendance (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    session_id INTEGER NOT NULL,
-                    class_id INTEGER NOT NULL,
-                    student_id INTEGER NOT NULL,
-                    student_name TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT '--',
-                    marked_at TEXT,
-                    UNIQUE(session_id, student_id))''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS app_settings (
-                    key TEXT PRIMARY KEY,
-                    value TEXT NOT NULL)''')
-    
-    db.execute('''CREATE TABLE IF NOT EXISTS fingerprint_templates (
-                    student_id INTEGER PRIMARY KEY,
-                    class_id INTEGER NOT NULL,
-                    template_data BLOB NOT NULL,
-                    template_size INTEGER NOT NULL,
-                    created_at TEXT NOT NULL)''')
-    
-    # Add missing columns
-    ensure_column(db, "students", "class_id", "INTEGER")
-    ensure_column(db, "students", "registered", "INTEGER NOT NULL DEFAULT 0")
-    ensure_column(db, "attendance_records", "session_id", "INTEGER")
-    
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS classes (
+        id   INT PRIMARY KEY,
+        name VARCHAR(255) UNIQUE NOT NULL
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS students (
+        id         INT PRIMARY KEY,
+        name       VARCHAR(255),
+        class_id   INT,
+        registered TINYINT NOT NULL DEFAULT 0
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS attendance_sessions (
+        id         INT AUTO_INCREMENT PRIMARY KEY,
+        class_id   INT NOT NULL,
+        started_at DATETIME NOT NULL,
+        ended_at   DATETIME
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS attendance_records (
+        id               INT AUTO_INCREMENT PRIMARY KEY,
+        session_id       INT,
+        class_id         INT NOT NULL,
+        student_id       INT NOT NULL,
+        student_name     VARCHAR(255) NOT NULL,
+        fingerprint_time DATETIME,
+        recorded_at      DATETIME NOT NULL
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS session_attendance (
+        id           INT AUTO_INCREMENT PRIMARY KEY,
+        session_id   INT NOT NULL,
+        class_id     INT NOT NULL,
+        student_id   INT NOT NULL,
+        student_name VARCHAR(255) NOT NULL,
+        status       VARCHAR(20) NOT NULL DEFAULT '--',
+        marked_at    DATETIME,
+        UNIQUE KEY uq_session_student (session_id, student_id)
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS app_settings (
+        `key` VARCHAR(255) PRIMARY KEY,
+        value TEXT NOT NULL
+    )''')
+
+    _execute(db, '''CREATE TABLE IF NOT EXISTS fingerprint_templates (
+        student_id    INT PRIMARY KEY,
+        class_id      INT NOT NULL,
+        template_data LONGBLOB NOT NULL,
+        template_size INT NOT NULL,
+        created_at    DATETIME NOT NULL
+    )''')
+
     db.commit()
     db.close()
 
 
+# ── Classes ───────────────────────────────────────────────────────────────────
+
 def get_classes():
     """Get all classes."""
     db = get_db()
-    cursor = db.execute("SELECT * FROM classes ORDER BY id")
-    classes = [dict(row) for row in cursor]
+    rows = _fetchall(db, "SELECT * FROM classes ORDER BY id")
     db.close()
-    return classes
+    return rows
 
 
 def add_class(name):
     """Add a new class."""
     db = get_db()
     try:
-        db.execute("INSERT INTO classes (name) VALUES (?)", (name,))
+        _execute(db, "INSERT INTO classes (name) VALUES (%s)", (name,))
         db.commit()
         db.close()
         return {'status': 'success'}
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         db.close()
         return {'status': 'error', 'message': 'Class name already exists'}
 
@@ -109,54 +138,53 @@ def update_class(class_id, name):
     """Update class name."""
     db = get_db()
     try:
-        db.execute("UPDATE classes SET name = ? WHERE id = ?", (name, class_id))
+        _execute(db, "UPDATE classes SET name = %s WHERE id = %s", (name, class_id))
         db.commit()
         db.close()
         return {'status': 'success'}
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         db.close()
         return {'status': 'error', 'message': 'Class name already exists'}
 
 
 def delete_class(class_id):
-    """Delete class and associated data."""
+    """Delete class and all associated data."""
     db = get_db()
-    db.execute("DELETE FROM session_attendance WHERE class_id = ?", (class_id,))
-    db.execute("DELETE FROM attendance_records WHERE class_id = ?", (class_id,))
-    db.execute("DELETE FROM attendance_sessions WHERE class_id = ?", (class_id,))
-    db.execute("DELETE FROM classes WHERE id = ?", (class_id,))
+    _execute(db, "DELETE FROM session_attendance WHERE class_id = %s", (class_id,))
+    _execute(db, "DELETE FROM attendance_records WHERE class_id = %s", (class_id,))
+    _execute(db, "DELETE FROM attendance_sessions WHERE class_id = %s", (class_id,))
+    _execute(db, "DELETE FROM classes WHERE id = %s", (class_id,))
     db.commit()
     db.close()
     return {'status': 'success'}
 
 
+# ── Students ──────────────────────────────────────────────────────────────────
+
 def get_students(class_id=None):
     """Get students, optionally filtered by class."""
     db = get_db()
     if class_id is None:
-        cursor = db.execute("SELECT * FROM students ORDER BY id")
+        rows = _fetchall(db, "SELECT * FROM students ORDER BY id")
     else:
-        cursor = db.execute(
-            "SELECT * FROM students WHERE class_id = ? ORDER BY id",
-            (class_id,)
-        )
-    students = [dict(row) for row in cursor]
+        rows = _fetchall(db,
+            "SELECT * FROM students WHERE class_id = %s ORDER BY id",
+            (class_id,))
     db.close()
-    return students
+    return rows
 
 
 def add_student(student_id, name, class_id):
     """Add a new student."""
     db = get_db()
     try:
-        db.execute(
-            "INSERT INTO students (id, name, class_id) VALUES (?, ?, ?)",
-            (student_id, name, class_id)
-        )
+        _execute(db,
+            "INSERT INTO students (id, name, class_id) VALUES (%s, %s, %s)",
+            (student_id, name, class_id))
         db.commit()
         db.close()
         return {'status': 'success'}
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         db.close()
         return {'status': 'error', 'message': 'Student ID already exists'}
 
@@ -165,22 +193,21 @@ def update_student(old_id, new_id, name):
     """Update student information."""
     db = get_db()
     try:
-        db.execute(
-            "UPDATE students SET name = ?, id = ? WHERE id = ?",
-            (name, new_id, old_id)
-        )
+        _execute(db,
+            "UPDATE students SET name = %s, id = %s WHERE id = %s",
+            (name, new_id, old_id))
         db.commit()
         db.close()
         return {'status': 'success'}
-    except sqlite3.IntegrityError:
+    except IntegrityError:
         db.close()
         return {'status': 'error', 'message': 'Student ID already exists'}
 
 
 def delete_student(student_id):
-    """Delete student."""
+    """Delete a student."""
     db = get_db()
-    db.execute("DELETE FROM students WHERE id = ?", (student_id,))
+    _execute(db, "DELETE FROM students WHERE id = %s", (student_id,))
     db.commit()
     db.close()
     return {'status': 'success'}

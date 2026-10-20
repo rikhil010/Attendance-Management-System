@@ -3,17 +3,15 @@
 #include <ESPAsyncWebServer.h>
 #include <SPIFFS.h>
 #include <ArduinoJson.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include "pins.h"
 #include "config.h"
 #include "fingerprint.h"
+#include "tft_display.h"
 
 // ─── Hardware Objects ───────────────────────────────────────
 HardwareSerial fingerSerial(2);
 FingerprintSensor fp(fingerSerial);
-Adafruit_SSD1306 display(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);
+TftDisplay display;
 AsyncWebServer server(80);
 ConfigManager config_manager;
 
@@ -1054,10 +1052,9 @@ void setup() {
         slotToName[i] = "";
     }
     
-    // OLED
-    Wire.begin(PIN_OLED_SDA, PIN_OLED_SCL);
-    if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_I2C_ADDR)) {
-        Serial.println("[OLED] Init failed");
+    // TFT display (ILI9341, SPI)
+    if (!display.begin()) {
+        Serial.println("[TFT] Init failed");
     } else {
         displayMessage("GWASOAT", "Starting...");
     }

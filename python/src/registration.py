@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import get_config
-from database import get_db
+from database import get_db, _fetchone, _fetchall, _execute
 from network import esp32_request
 from connection import get_connection
 from cloud_sync import get_cloud
@@ -56,11 +56,10 @@ def _resolve_active_session(class_id=None, session_id=None):
 
     if resolved_session_id is None and resolved_class_id is not None:
         db = get_db()
-        open_row = db.execute(
-            "SELECT id FROM attendance_sessions WHERE class_id = ? "
+        open_row = _fetchone(db,
+            "SELECT id FROM attendance_sessions WHERE class_id = %s "
             "AND ended_at IS NULL ORDER BY id DESC LIMIT 1",
-            (resolved_class_id,)
-        ).fetchone()
+            (resolved_class_id,))
         db.close()
         if open_row is not None:
             resolved_session_id = int(open_row["id"])
@@ -202,19 +201,17 @@ def start_attendance_session(class_id):
     db = get_db()
 
     # Close any existing open session first
-    open_sessions = db.execute(
-        "SELECT id FROM attendance_sessions WHERE class_id = ? AND ended_at IS NULL",
-        (class_id,)
-    ).fetchall()
+    open_sessions = _fetchall(db,
+        "SELECT id FROM attendance_sessions WHERE class_id = %s AND ended_at IS NULL",
+        (class_id,))
     for sess in open_sessions:
-        db.execute(
-            "UPDATE session_attendance SET status = 'Absent' WHERE session_id = ? AND status = '--'",
-            (sess["id"],)
-        )
-        db.execute(
-            "UPDATE attendance_sessions SET ended_at = ? WHERE id = ?",
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sess["id"])
-        )
+        _execute(db,
+            "UPDATE session_attendance SET status = 'Absent' "
+            "WHERE session_id = %s AND status = '--'",
+            (sess["id"],))
+        _execute(db,
+            "UPDATE attendance_sessions SET ended_at = %s WHERE id = %s",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), sess["id"]))
     db.commit()
 
     # ─── CACHE MODE: Load class templates from DB into sensor ───
@@ -222,13 +219,12 @@ def start_attendance_session(class_id):
     import requests as req_lib
     ip = get_config().get("esp32_ip", "192.168.0.103")
 
-    templates = db.execute(
+    templates = _fetchall(db,
         "SELECT ft.student_id, ft.template_data, ft.template_size, s.name "
         "FROM fingerprint_templates ft "
         "JOIN students s ON s.id = ft.student_id "
-        "WHERE ft.class_id = ? ORDER BY ft.student_id",
-        (class_id,)
-    ).fetchall()
+        "WHERE ft.class_id = %s ORDER BY ft.student_id",
+        (class_id,))
 
     # Clear sensor cache and attendance buffer
     esp32_request('/clear_attendance', timeout=3)
@@ -266,25 +262,22 @@ def start_attendance_session(class_id):
     print(f"[ATT] Attendance started")
 
     attendance_session_started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur = db.execute(
+    active_session_id = _execute(db,
         "INSERT INTO attendance_sessions (class_id, started_at, ended_at) "
-        "VALUES (?, ?, NULL)",
-        (class_id, attendance_session_started_at)
-    )
-    active_session_id = int(cur.lastrowid)
+        "VALUES (%s, %s, NULL)",
+        (class_id, attendance_session_started_at))
 
-    students = db.execute(
-        "SELECT id, name FROM students WHERE class_id = ? ORDER BY id",
-        (class_id,)
-    ).fetchall()
+    students = _fetchall(db,
+        "SELECT id, name FROM students WHERE class_id = %s ORDER BY id",
+        (class_id,))
 
     for student in students:
-        db.execute(
-            "INSERT OR REPLACE INTO session_attendance "
+        _execute(db,
+            "INSERT INTO session_attendance "
             "(session_id, class_id, student_id, student_name, status, marked_at) "
-            "VALUES (?, ?, ?, ?, '--', NULL)",
-            (active_session_id, class_id, int(student["id"]), student["name"])
-        )
+            "VALUES (%s, %s, %s, %s, '--', NULL) "
+            "ON DUPLICATE KEY UPDATE status = status",
+            (active_session_id, class_id, int(student["id"]), student["name"]))
 
     db.commit()
 
@@ -315,25 +308,22 @@ def stop_attendance_session():
 
     if resolved_session_id is not None and resolved_class_id is not None:
         db = get_db()
-        db.execute(
+        _execute(db,
             "UPDATE session_attendance SET status = 'Absent' "
-            "WHERE session_id = ? AND status = '--'",
-            (resolved_session_id,)
-        )
-        db.execute(
-            "UPDATE attendance_sessions SET ended_at = ? WHERE id = ?",
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), resolved_session_id)
-        )
+            "WHERE session_id = %s AND status = '--'",
+            (resolved_session_id,))
+        _execute(db,
+            "UPDATE attendance_sessions SET ended_at = %s WHERE id = %s",
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), resolved_session_id))
         db.commit()
 
         # Sync attendance records to cloud
         try:
             cloud = get_cloud()
-            rows = db.execute(
+            rows = _fetchall(db,
                 "SELECT student_id, student_name, status, marked_at "
-                "FROM session_attendance WHERE session_id = ?",
-                (resolved_session_id,)
-            ).fetchall()
+                "FROM session_attendance WHERE session_id = %s",
+                (resolved_session_id,))
             records = [
                 {
                     "student_id": int(r["student_id"]),
