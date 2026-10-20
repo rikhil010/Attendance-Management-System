@@ -1,0 +1,17 @@
+# GWASOAT — Desktop application Python dependencies
+# Install with:  pip install -r requirements.txt
+
+# Web back end (Flask) served inside a native window
+flask>=2.3.0
+pywebview>=4.0
+
+# MySQL database driver (REQUIRED — the app will not start without it)
+mysql-connector-python>=8.3.0
+
+# HTTP communication with the ESP32 device over WiFi
+requests>=2.28.0
+
+# Optional: Bluetooth Low Energy (BLE) fallback transport.
+# Only needed if you want BLE connectivity when WiFi is unavailable.
+# The app degrades gracefully and runs WiFi-only if this is not installed.
+bleak>=0.21.0
