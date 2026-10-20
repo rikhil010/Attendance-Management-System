@@ -68,7 +68,8 @@ def initialize_new_schema():
         password   VARCHAR(255) NOT NULL,
         role       VARCHAR(50) NOT NULL DEFAULT 'student',
         student_id INT,
-        created_at DATETIME NOT NULL
+        created_at DATETIME NOT NULL,
+        CONSTRAINT chk_user_role CHECK (role COLLATE utf8mb4_bin IN ('admin', 'teacher', 'student'))
     )''')
 
     # Role → permission mapping (role-based access control)
