@@ -12,7 +12,8 @@ from datetime import datetime
 from flask import render_template, request, jsonify, session, redirect, send_file
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models import get_db, hash_password, log_action, ensure_student_account
+from models import (get_db, hash_password, log_action, ensure_student_account,
+                    procedure_installed)
 from database import _fetchone, _fetchall, _execute
 from auth import (login_required, admin_required, get_current_user,
                   can_manage_course, course_owner_required, check_course_access)
@@ -236,53 +237,104 @@ def setup_new_routes(app):
                 WHERE s.batch_id = %s
             ''', (course_id, int(batch)))
 
-        esp32_request('/clear_attendance', timeout=3)
-        import requests as req_lib
-        from config import get_config
-        ip = get_config().get("esp32_ip", "192.168.0.103")
-        try:
-            req_lib.post(f"http://{ip}/command", json={"cmd": "clear_sensor"}, timeout=8)
-        except Exception:
-            pass
-
-        loaded = 0
-        for tpl in templates:
-            b64 = base64.b64encode(tpl["template_data"]).decode()
-            try:
-                payload = {"cmd": "upload_template", "student_id": tpl["student_id"],
-                           "class_id": 0, "name": tpl["name"], "template": b64}
-                r = req_lib.post(f"http://{ip}/command", json=payload, timeout=20)
-                if r.status_code == 200 and r.json().get("status") == "success":
-                    loaded += 1
-            except Exception:
-                pass
-
-        esp32_request('/start_attendance', timeout=5)
-
+        # ── 1. Create the attendance session in the DB FIRST ──────────────
+        # Attendance must start (and be markable manually) even when the ESP32
+        # device is unreachable. The device loading below is best-effort and
+        # never blocks the session from being created.
         class_id = students[0]['class_id'] if students else None
         batch_id = int(batch) if batch != 'all' else None
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        session_id = _execute(db,
-            "INSERT INTO attendance_sessions "
-            "(course_id, teacher_id, class_id, batch_id, description, started_at) "
-            "VALUES (%s,%s,%s,%s,%s,%s)",
-            (course_id, user['id'], class_id, batch_id, description, now))
 
-        for s in students:
-            _execute(db,
-                "INSERT IGNORE INTO session_attendance "
-                "(session_id, student_id, student_name, status) VALUES (%s,%s,%s,%s)",
-                (session_id, s['id'], s['name'], '--'))
-        db.commit()
+        # Whole-class start: use the start_session stored procedure when it is
+        # installed, so the session + all roster rows are created inside ONE
+        # transaction (atomic; rolls back on any error). The procedure enrols
+        # every course_students row, so it is used only for the 'all' case.
+        # A batch-filtered start, or a missing procedure, falls back to the
+        # inline inserts below.
+        use_proc = (batch == 'all') and procedure_installed(db, 'start_session')
+        try:
+            if use_proc:
+                cur = db.cursor()
+                try:
+                    # callproc binds the OUT param and returns the out values.
+                    out = cur.callproc('start_session',
+                                       (course_id, user['id'], class_id, batch_id, description, 0))
+                    session_id = out[5]  # OUT out_session_id (6th arg)
+                    db.commit()
+                finally:
+                    cur.close()
+            else:
+                session_id = _execute(db,
+                    "INSERT INTO attendance_sessions "
+                    "(course_id, teacher_id, class_id, batch_id, description, started_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (course_id, user['id'], class_id, batch_id, description, now))
+                for s in students:
+                    _execute(db,
+                        "INSERT IGNORE INTO session_attendance "
+                        "(session_id, student_id, student_name, status) VALUES (%s,%s,%s,%s)",
+                        (session_id, s['id'], s['name'], '--'))
+                db.commit()
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            db.close()
+            # Surface a clear error to the UI (the procedure's EXIT HANDLER has
+            # already rolled back on its side).
+            return jsonify({'status': 'error',
+                            'message': f'Could not start the session (rolled back): {e}'}), 500
 
         session['active_session_id'] = session_id
         session['active_course_id'] = course_id
-
         db.close()
+
+        # ── 2. Best-effort: load templates onto the device (short timeouts) ──
+        # First probe whether the device is reachable at all. If not, skip all
+        # device I/O so the request returns immediately in offline/manual mode.
+        import requests as req_lib
+        from config import get_config
+        ip = get_config().get("esp32_ip", "192.168.0.103")
+        device_online = False
+        loaded = 0
+        try:
+            probe = req_lib.get(f"http://{ip}/status", timeout=2)
+            device_online = (probe.status_code == 200)
+        except Exception:
+            device_online = False
+
+        if device_online:
+            try:
+                req_lib.get(f"http://{ip}/clear_attendance", timeout=3)
+            except Exception:
+                pass
+            try:
+                req_lib.post(f"http://{ip}/command", json={"cmd": "clear_sensor"}, timeout=5)
+            except Exception:
+                pass
+            for tpl in templates:
+                b64 = base64.b64encode(tpl["template_data"]).decode()
+                try:
+                    payload = {"cmd": "upload_template", "student_id": tpl["student_id"],
+                               "class_id": 0, "name": tpl["name"], "template": b64}
+                    r = req_lib.post(f"http://{ip}/command", json=payload, timeout=8)
+                    if r.status_code == 200 and r.json().get("status") == "success":
+                        loaded += 1
+                except Exception:
+                    pass
+            try:
+                req_lib.get(f"http://{ip}/start_attendance", timeout=3)
+            except Exception:
+                pass
+
+        mode = 'device' if device_online else 'manual'
         log_action(user, 'start_attendance',
-                   f'course {course_id}, session {session_id}, {len(students)} students, {loaded} templates loaded')
+                   f'course {course_id}, session {session_id}, {len(students)} students, '
+                   f'{loaded} templates loaded, mode={mode}')
         return jsonify({'status': 'success', 'session_id': session_id,
-                        'loaded': loaded, 'students': len(students)})
+                        'loaded': loaded, 'students': len(students),
+                        'device_online': device_online, 'mode': mode})
 
     @app.route('/api/course/<int:course_id>/attendance/stop')
     @login_required
@@ -300,8 +352,16 @@ def setup_new_routes(app):
             db.commit()
         session.pop('active_session_id', None)
         session.pop('active_course_id', None)
-        esp32_request('/stop_attendance', timeout=3)
         db.close()
+        # Best-effort device stop: probe once (2s) so it never blocks when the
+        # device is offline. The session is already closed in the DB above.
+        try:
+            import requests as req_lib
+            from config import get_config
+            ip = get_config().get("esp32_ip", "192.168.0.103")
+            req_lib.get(f"http://{ip}/stop_attendance", timeout=2)
+        except Exception:
+            pass
         log_action(get_current_user(), 'stop_attendance', f'course {course_id}, session {session_id}')
         return jsonify({'status': 'success'})
 
@@ -316,6 +376,28 @@ def setup_new_routes(app):
         db.close()
         return jsonify([{**r, 'started_at': str(r['started_at']),
                          'ended_at': str(r['ended_at']) if r['ended_at'] else ''} for r in rows])
+
+    @app.route('/api/session/<int:session_id>', methods=['DELETE'])
+    @login_required
+    def delete_attendance_session(session_id):
+        """Delete an attendance session and its marks (owner/admin only)."""
+        user = get_current_user()
+        err = _session_course_guard(user, session_id)
+        if err:
+            return err
+        db = get_db()
+        # Remove child rows first (session_attendance has ON DELETE CASCADE in the
+        # canonical schema, but delete explicitly so it works regardless of FK setup).
+        _execute(db, "DELETE FROM session_attendance WHERE session_id=%s", (session_id,))
+        _execute(db, "DELETE FROM attendance_sessions WHERE id=%s", (session_id,))
+        db.commit()
+        db.close()
+        # If the deleted session was the active one, clear it from the Flask session.
+        if session.get('active_session_id') == session_id:
+            session.pop('active_session_id', None)
+            session.pop('active_course_id', None)
+        log_action(user, 'delete_session', f'session {session_id}')
+        return jsonify({'status': 'success'})
 
     @app.route('/api/session/<int:session_id>/description', methods=['POST'])
     @login_required
@@ -608,9 +690,124 @@ def setup_new_routes(app):
             db.close()
             return jsonify({'status': 'success'})
         rows = _fetchall(db, '''
-            SELECT s.id, s.name, s.prn, s.roll_no FROM students s
+            SELECT s.id, s.name, s.prn, s.roll_no,
+                   COALESCE(b.name,'') AS batch_name, COALESCE(cl.name,'') AS class_name
+            FROM students s
             JOIN course_students cs ON cs.student_id=s.id AND cs.course_id=%s
-            ORDER BY s.name
+            LEFT JOIN batches b ON b.id = s.batch_id
+            LEFT JOIN classes cl ON cl.id = s.class_id
+            ORDER BY s.roll_no, s.name
         ''', (course_id,))
         db.close()
         return jsonify(rows)
+
+    # ─── Two-way Class ↔ Course assignment ───────────────────
+    @app.route('/api/admin/classes/<int:class_id>/students')
+    @admin_required
+    def admin_class_students(class_id):
+        """List all students in a class, with the courses each is enrolled in."""
+        db = get_db()
+        rows = _fetchall(db, '''
+            SELECT s.id, s.name, s.prn, s.roll_no,
+                   COALESCE(b.name,'') AS batch_name,
+                   COALESCE((SELECT GROUP_CONCAT(c.code ORDER BY c.code SEPARATOR ', ')
+                             FROM course_students cs JOIN courses c ON c.id=cs.course_id
+                             WHERE cs.student_id=s.id), '') AS course_codes,
+                   (SELECT COUNT(*) FROM course_students cs WHERE cs.student_id=s.id) AS course_count
+            FROM students s
+            LEFT JOIN batches b ON b.id = s.batch_id
+            WHERE s.class_id=%s
+            ORDER BY s.roll_no, s.name
+        ''', (class_id,))
+        db.close()
+        return jsonify(rows)
+
+    @app.route('/api/admin/course/<int:course_id>/available_students')
+    @admin_required
+    def admin_course_available_students(course_id):
+        """Students NOT yet enrolled in the course, optionally filtered by class."""
+        class_id = request.args.get('class_id')
+        db = get_db()
+        params = [course_id]
+        clause = ''
+        if class_id:
+            clause = ' AND s.class_id=%s'
+            params.append(int(class_id))
+        rows = _fetchall(db, '''
+            SELECT s.id, s.name, s.prn, s.roll_no,
+                   COALESCE(b.name,'') AS batch_name, COALESCE(cl.name,'') AS class_name
+            FROM students s
+            LEFT JOIN batches b ON b.id = s.batch_id
+            LEFT JOIN classes cl ON cl.id = s.class_id
+            WHERE s.id NOT IN (SELECT student_id FROM course_students WHERE course_id=%s)
+        ''' + clause + '''
+            ORDER BY s.roll_no, s.name
+        ''', tuple(params))
+        db.close()
+        return jsonify(rows)
+
+    @app.route('/api/admin/course/<int:course_id>/students/bulk', methods=['POST'])
+    @admin_required
+    def admin_course_enroll_bulk(course_id):
+        """Enrol many students into a course. student_ids = comma-separated list,
+        or class_id to enrol every student of that class."""
+        db = get_db()
+        ids = request.form.get('student_ids', '')
+        class_id = request.form.get('class_id')
+        student_ids = [int(x) for x in ids.split(',') if x.strip().isdigit()]
+        if class_id and not student_ids:
+            rows = _fetchall(db, "SELECT id FROM students WHERE class_id=%s", (int(class_id),))
+            student_ids = [r['id'] for r in rows]
+        added = 0
+        for sid in student_ids:
+            _execute(db,
+                "INSERT IGNORE INTO course_students (course_id, student_id) VALUES (%s,%s)",
+                (course_id, sid))
+            added += 1
+        db.commit()
+        db.close()
+        log_action(get_current_user(), 'enroll_bulk',
+                   f'course {course_id}: +{added} students')
+        return jsonify({'status': 'success', 'added': added})
+
+    @app.route('/api/admin/course/<int:course_id>/students/<int:sid>', methods=['DELETE'])
+    @admin_required
+    def admin_course_unenroll(course_id, sid):
+        """Remove a student from a course (does not delete the student)."""
+        db = get_db()
+        _execute(db, "DELETE FROM course_students WHERE course_id=%s AND student_id=%s",
+                 (course_id, sid))
+        db.commit()
+        db.close()
+        log_action(get_current_user(), 'unenroll',
+                   f'course {course_id}: student {sid}')
+        return jsonify({'status': 'success'})
+
+    @app.route('/api/admin/classes/<int:class_id>/enroll', methods=['POST'])
+    @admin_required
+    def admin_class_enroll(class_id):
+        """Enrol a set of the class's students into a set of courses.
+        course_ids = comma-separated; student_ids = comma-separated (empty = whole class)."""
+        db = get_db()
+        course_ids = [int(x) for x in request.form.get('course_ids', '').split(',') if x.strip().isdigit()]
+        ids = request.form.get('student_ids', '')
+        student_ids = [int(x) for x in ids.split(',') if x.strip().isdigit()]
+        if not student_ids:
+            rows = _fetchall(db, "SELECT id FROM students WHERE class_id=%s", (class_id,))
+            student_ids = [r['id'] for r in rows]
+        if not course_ids:
+            db.close()
+            return jsonify({'status': 'error', 'message': 'Select at least one course'}), 400
+        added = 0
+        for cid in course_ids:
+            for sid in student_ids:
+                _execute(db,
+                    "INSERT IGNORE INTO course_students (course_id, student_id) VALUES (%s,%s)",
+                    (cid, sid))
+                added += 1
+        db.commit()
+        db.close()
+        log_action(get_current_user(), 'class_enroll',
+                   f'class {class_id}: {len(student_ids)} students into {len(course_ids)} courses')
+        return jsonify({'status': 'success', 'added': added,
+                        'students': len(student_ids), 'courses': len(course_ids)})

@@ -32,6 +32,7 @@
             <li class="nav-item"><a class="nav-link" data-tab="students" href="#">Students</a></li>
             <li class="nav-item"><a class="nav-link" data-tab="timetable" href="#">Timetable</a></li>
             <li class="nav-item"><a class="nav-link" data-tab="audit" href="#">Activity Log</a></li>
+            <li class="nav-item"><a class="nav-link" data-tab="insights" href="#">DB Insights</a></li>
         </ul>
 
         <div class="card p-3" id="tabContent">Loading...</div>
@@ -76,6 +77,7 @@
         $('#tabContent').html('<div class="text-muted p-3">Loading...</div>');
         if (tab === 'audit') { return loadAudit(); }
         if (tab === 'timetable') { return loadTimetable(); }
+        if (tab === 'insights') { return loadInsights(); }
         $.get('/api/admin/' + tab, function(data) {
             $('#tabContent').html(buildTable(tab, data));
             GW.enhanceTable('#adminTable', { search: '#adminSearch', countEl: '#adminCount' });
@@ -88,8 +90,11 @@
 
     function rowActions(tab, r) {
         var html = '';
-        if (tab === 'classes') html += '<button class="gw-row-btn" onclick="manageBatches(' + r.id + ',\'' + esc(r.name) + '\')">Batches</button>';
-        if (tab === 'courses') html += '<button class="gw-row-btn" onclick="manageCourseStudents(' + r.id + ')">Students</button>';
+        if (tab === 'classes') {
+            html += '<button class="gw-row-btn" onclick="manageBatches(' + r.id + ',\'' + esc(r.name) + '\')">Batches</button>';
+            html += '<button class="gw-row-btn" onclick="manageClassStudents(' + r.id + ',\'' + esc(r.name) + '\')">Students</button>';
+        }
+        if (tab === 'courses') html += '<button class="gw-row-btn" onclick="manageCourseStudents(' + r.id + ',\'' + esc(r.name) + '\')">Students</button>';
         if (tab === 'students' || tab === 'courses' || tab === 'classes') {
             html += '<button class="gw-row-btn" onclick="editItem(\'' + tab + '\',' + r.id + ')">Edit</button>';
         }
@@ -218,9 +223,122 @@
         });
     }
 
-    function manageCourseStudents(courseId) {
-        window.location.href = '/admin/course/' + courseId + '/students';
+    // ── Course → Students: view enrolled, remove, and add (filtered by class) ──
+    function manageCourseStudents(courseId, courseName) {
+        if ($('#assignPanel').length) $('#assignPanel').remove();
+        var html = '<div class="card p-3 mb-3" id="assignPanel">'
+            + '<div class="d-flex justify-content-between align-items-center mb-2">'
+            + '<h6 class="mb-0">Students in ' + esc(courseName || ('course ' + courseId)) + '</h6>'
+            + '<button class="btn btn-outline-secondary btn-sm" onclick="$(\'#assignPanel\').remove()">Close</button></div>'
+            + '<div class="row g-3">'
+            + '  <div class="col-md-6"><div class="small text-muted mb-1">Enrolled</div>'
+            + '    <div style="max-height:40vh;overflow:auto"><table class="gw-table"><tbody id="enrolledBody"></tbody></table></div></div>'
+            + '  <div class="col-md-6"><div class="small text-muted mb-1">Add students</div>'
+            + '    <select class="form-select form-select-sm mb-2" id="assignClassFilter"><option value="">All classes</option></select>'
+            + '    <div style="max-height:30vh;overflow:auto;border:1px solid #d1d9e0;border-radius:6px;padding:6px" id="availBox"></div>'
+            + '    <button class="btn btn-primary btn-sm mt-2" id="btnEnrollSel" onclick="enrollSelected(' + courseId + ')">Add selected</button></div>'
+            + '</div></div>';
+        $('#tabContent').prepend(html);
+        $.get('/api/admin/classes', function(cs) {
+            cs.forEach(function(c){ $('#assignClassFilter').append('<option value="'+c.id+'">'+esc(c.name)+'</option>'); });
+        });
+        $('#assignClassFilter').change(function(){ loadAvailable(courseId, $(this).val()); });
+        loadCourseEnrolled(courseId);
+        loadAvailable(courseId, '');
     }
+    function loadCourseEnrolled(courseId) {
+        $.get('/api/admin/course/' + courseId + '/students', function(rows) {
+            var h = '';
+            rows.forEach(function(s) {
+                h += '<tr><td>' + esc(s.roll_no || '-') + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.batch_name || '') + '</td>'
+                   + '<td><button class="gw-row-btn gw-danger" onclick="unenroll(' + courseId + ',' + s.id + ')">Remove</button></td></tr>';
+            });
+            $('#enrolledBody').html(h || '<tr data-gw-empty><td class="gw-empty" colspan="4">No students enrolled</td></tr>');
+        });
+    }
+    function loadAvailable(courseId, classId) {
+        $.get('/api/admin/course/' + courseId + '/available_students', {class_id: classId || ''}, function(rows) {
+            if (!rows.length) { $('#availBox').html('<div class="text-muted small">All students in this filter are already enrolled.</div>'); return; }
+            var h = '';
+            rows.forEach(function(s) {
+                h += '<label class="d-block small"><input type="checkbox" class="availChk" value="' + s.id + '"> '
+                   + esc(s.roll_no ? (s.roll_no + ' · ') : '') + esc(s.name)
+                   + (s.batch_name ? ' <span class="text-muted">(' + esc(s.batch_name) + ')</span>' : '') + '</label>';
+            });
+            $('#availBox').html(h);
+        });
+    }
+    function enrollSelected(courseId) {
+        var ids = $('.availChk:checked').map(function(){ return this.value; }).get();
+        if (!ids.length) { GW.toast('Select at least one student', 'warning'); return; }
+        GW.btnLoading('#btnEnrollSel', true, 'Adding...');
+        $.post('/api/admin/course/' + courseId + '/students/bulk', {student_ids: ids.join(',')}, function(r) {
+            GW.btnLoading('#btnEnrollSel', false);
+            GW.toast(r.added + ' student(s) added', 'success');
+            loadCourseEnrolled(courseId);
+            loadAvailable(courseId, $('#assignClassFilter').val());
+            loadTabData('courses');
+        }).fail(function(xhr){ GW.btnLoading('#btnEnrollSel', false); GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not add', 'danger'); });
+    }
+    function unenroll(courseId, sid) {
+        $.ajax({ url: '/api/admin/course/' + courseId + '/students/' + sid, method: 'DELETE', success: function() {
+            GW.toast('Removed', 'success');
+            loadCourseEnrolled(courseId);
+            loadAvailable(courseId, $('#assignClassFilter').val());
+        }});
+    }
+    window.manageCourseStudents = manageCourseStudents;
+    window.enrollSelected = enrollSelected;
+    window.unenroll = unenroll;
+
+    // ── Class → Students: view class roster, assign selected to selected courses ──
+    function manageClassStudents(classId, className) {
+        if ($('#assignPanel').length) $('#assignPanel').remove();
+        var html = '<div class="card p-3 mb-3" id="assignPanel">'
+            + '<div class="d-flex justify-content-between align-items-center mb-2">'
+            + '<h6 class="mb-0">Students in ' + esc(className) + '</h6>'
+            + '<button class="btn btn-outline-secondary btn-sm" onclick="$(\'#assignPanel\').remove()">Close</button></div>'
+            + '<div class="row g-3">'
+            + '  <div class="col-md-7"><div class="small text-muted mb-1">Class roster '
+            + '    (<a href="#" id="selAllStu">select all</a> / <a href="#" id="selNoneStu">none</a>)</div>'
+            + '    <div style="max-height:45vh;overflow:auto"><table class="gw-table"><thead><tr><th data-gw-no-sort></th><th>Roll</th><th>Name</th><th>Batch</th><th>Courses</th></tr></thead><tbody id="classStuBody"></tbody></table></div></div>'
+            + '  <div class="col-md-5"><div class="small text-muted mb-1">Assign selected students to courses</div>'
+            + '    <div style="max-height:30vh;overflow:auto;border:1px solid #d1d9e0;border-radius:6px;padding:6px" id="courseBox"></div>'
+            + '    <button class="btn btn-primary btn-sm mt-2" id="btnClassEnroll" onclick="classEnroll(' + classId + ')">Enroll into selected courses</button>'
+            + '    <div class="small text-muted mt-1">Tip: leave students unchecked to enroll the whole class.</div></div>'
+            + '</div></div>';
+        $('#tabContent').prepend(html);
+        $.get('/api/admin/classes/' + classId + '/students', function(rows) {
+            var h = '';
+            rows.forEach(function(s) {
+                h += '<tr><td><input type="checkbox" class="classStuChk" value="' + s.id + '"></td>'
+                   + '<td>' + esc(s.roll_no || '-') + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.batch_name || '-') + '</td>'
+                   + '<td class="small text-muted">' + esc(s.course_codes || '—') + '</td></tr>';
+            });
+            $('#classStuBody').html(h || '<tr data-gw-empty><td class="gw-empty" colspan="5">No students in this class</td></tr>');
+        });
+        $.get('/api/admin/courses', function(cs) {
+            var h = '';
+            cs.forEach(function(c){ h += '<label class="d-block small"><input type="checkbox" class="courseChk" value="' + c.id + '"> ' + esc((c.code ? c.code + ' · ' : '') + c.name) + '</label>'; });
+            $('#courseBox').html(h || '<div class="text-muted small">No courses yet</div>');
+        });
+        $('#selAllStu').click(function(e){ e.preventDefault(); $('.classStuChk').prop('checked', true); });
+        $('#selNoneStu').click(function(e){ e.preventDefault(); $('.classStuChk').prop('checked', false); });
+    }
+    function classEnroll(classId) {
+        var courseIds = $('.courseChk:checked').map(function(){ return this.value; }).get();
+        if (!courseIds.length) { GW.toast('Select at least one course', 'warning'); return; }
+        var studentIds = $('.classStuChk:checked').map(function(){ return this.value; }).get();
+        GW.btnLoading('#btnClassEnroll', true, 'Enrolling...');
+        $.post('/api/admin/classes/' + classId + '/enroll',
+            {course_ids: courseIds.join(','), student_ids: studentIds.join(',')}, function(r) {
+            GW.btnLoading('#btnClassEnroll', false);
+            GW.toast('Enrolled ' + r.students + ' student(s) into ' + r.courses + ' course(s)', 'success');
+            manageClassStudents(classId, $('#assignPanel h6').text().replace('Students in ', ''));
+        }).fail(function(xhr){ GW.btnLoading('#btnClassEnroll', false); GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not enroll', 'danger'); });
+    }
+    window.manageClassStudents = manageClassStudents;
+    window.classEnroll = classEnroll;
 
     function resetStudentPassword(sid) {
         GW.confirm({ title: 'Reset student password',
@@ -366,23 +484,100 @@
         });
     }
 
-    // ── Activity log ──
+    // ── Activity log (with action + date filters) ──
     function loadAudit() {
-        $.get('/api/admin/audit', function(data) {
-            var html = '<h5 class="mb-3">Activity Log</h5>';
-            html += '<div class="gw-table-wrap"><div class="gw-table-toolbar"><input class="gw-table-search" id="adminSearch" placeholder="Search activity..."><span class="gw-table-count" id="adminCount"></span></div>';
-            html += '<div style="max-height:70vh;overflow:auto"><table class="gw-table" id="adminTable"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody>';
+        var html = '<h5 class="mb-3">Activity Log</h5>';
+        html += '<div class="d-flex gap-2 align-items-end flex-wrap mb-3">';
+        html += '<div><label class="form-label small mb-0">Action</label><select class="form-select form-select-sm" id="auditAction" style="width:180px"><option value="">All actions</option></select></div>';
+        html += '<div><label class="form-label small mb-0">From</label><input type="date" class="form-control form-control-sm" id="auditStart"></div>';
+        html += '<div><label class="form-label small mb-0">To</label><input type="date" class="form-control form-control-sm" id="auditEnd"></div>';
+        html += '<button class="btn btn-primary btn-sm" id="btnAuditFilter">Filter</button>';
+        html += '<button class="btn btn-outline-secondary btn-sm" id="btnAuditClear">Clear</button></div>';
+        html += '<div class="gw-table-wrap"><div class="gw-table-toolbar"><input class="gw-table-search" id="adminSearch" placeholder="Search activity..."><span class="gw-table-count" id="adminCount"></span></div>';
+        html += '<div style="max-height:62vh;overflow:auto"><table class="gw-table" id="adminTable"><thead><tr><th>When</th><th>User</th><th>Action</th><th>Details</th></tr></thead><tbody id="auditBody"></tbody></table></div></div>';
+        $('#tabContent').html(html);
+
+        // Populate the action dropdown from the distinct actions in the log.
+        $.get('/api/admin/audit/actions', function(actions) {
+            actions.forEach(function(a){ $('#auditAction').append('<option value="' + esc(a) + '">' + esc(a) + '</option>'); });
+        });
+        $('#btnAuditFilter').click(fetchAudit);
+        $('#btnAuditClear').click(function(){ $('#auditAction').val(''); $('#auditStart').val(''); $('#auditEnd').val(''); fetchAudit(); });
+        fetchAudit();
+    }
+    function fetchAudit() {
+        var p = {};
+        if ($('#auditAction').val()) p.action = $('#auditAction').val();
+        if ($('#auditStart').val()) p.start = $('#auditStart').val();
+        if ($('#auditEnd').val()) p.end = $('#auditEnd').val();
+        $.get('/api/admin/audit', p, function(data) {
+            var html = '';
             if (!data.length) {
-                html += '<tr data-gw-empty><td class="gw-empty" colspan="4">No activity recorded yet.</td></tr>';
+                html = '<tr data-gw-empty><td class="gw-empty" colspan="4">No activity for this filter.</td></tr>';
             } else {
                 data.forEach(function(r) {
-                    html += '<tr><td>' + esc(r.created_at) + '</td><td>' + esc(r.user_name || '-') + '</td><td><span class="gw-pill gw-pill-info">' + esc(r.action) + '</span></td><td>' + esc(r.details || '') + '</td></tr>';
+                    var isGrade = r.action === 'GRADE_INSERT' || r.action === 'GRADE_UPDATE';
+                    var pill = isGrade ? 'gw-pill-success' : 'gw-pill-info';
+                    html += '<tr><td>' + esc(r.created_at) + '</td><td>' + esc(r.user_name || '-') + '</td><td><span class="gw-pill ' + pill + '">' + esc(r.action) + '</span></td><td>' + esc(r.details || '') + '</td></tr>';
                 });
             }
-            html += '</tbody></table></div></div>';
-            $('#tabContent').html(html);
+            $('#auditBody').html(html);
             GW.enhanceTable('#adminTable', { search: '#adminSearch', countEl: '#adminCount' });
             $('#adminCount').text(data.length + ' entries');
+        }).fail(function(){ GW.toast('Could not load activity log', 'danger'); });
+    }
+
+    // ── DB Insights (admin dashboards, each backed by a SQL JOIN/GROUP BY) ──
+    function loadInsights() {
+        $('#tabContent').html('<div class="text-muted p-3">Loading insights...</div>');
+        $.get('/api/admin/insights', function(d) {
+            function card(title, subtitle, headers, rows, renderRow) {
+                var h = '<div class="card p-3 mb-3"><h6 class="mb-1">' + title + '</h6>';
+                h += '<div class="text-muted small mb-2">' + subtitle + '</div>';
+                h += '<div class="gw-table-wrap"><table class="gw-table"><thead><tr>';
+                headers.forEach(function(c){ h += '<th>' + c + '</th>'; });
+                h += '</tr></thead><tbody>';
+                if (!rows.length) {
+                    h += '<tr data-gw-empty><td class="gw-empty" colspan="' + headers.length + '">No data yet.</td></tr>';
+                } else {
+                    rows.forEach(function(r){ h += '<tr>' + renderRow(r) + '</tr>'; });
+                }
+                h += '</tbody></table></div></div>';
+                return h;
+            }
+
+            var html = '<h5 class="mb-3">DB Insights</h5>';
+            html += '<p class="text-muted small">Each table below is computed by a single SQL query using JOINs and GROUP BY — no values are calculated in the application code.</p>';
+
+            html += card('Average grade per course',
+                'JOIN grades → courses, GROUP BY course, AVG(score/max_score).',
+                ['Code', 'Course', 'Graded entries', 'Average %'],
+                d.avg_grade_per_course, function(r) {
+                    return '<td>' + esc(r.code || '-') + '</td><td>' + esc(r.course) + '</td>'
+                         + '<td>' + r.graded_entries + '</td>'
+                         + '<td>' + (r.graded_entries ? r.avg_percent + '%' : '-') + '</td>';
+                });
+
+            html += card('Attendance % per class',
+                'JOIN class → sessions → session_attendance, GROUP BY class, AVG(status=\'Present\').',
+                ['Class', 'Sessions', 'Attendance %'],
+                d.attendance_per_class, function(r) {
+                    return '<td>' + esc(r.class_name || '-') + '</td><td>' + r.sessions + '</td>'
+                         + '<td>' + (r.marks ? r.attendance_percent + '%' : '-') + '</td>';
+                });
+
+            html += card('Sessions per teacher',
+                'JOIN attendance_sessions → users (teacher), GROUP BY teacher.',
+                ['Teacher', 'Sessions conducted', 'Courses'],
+                d.sessions_per_teacher, function(r) {
+                    return '<td>' + esc(r.teacher) + '</td><td>' + r.session_count + '</td>'
+                         + '<td>' + r.courses_taught + '</td>';
+                });
+
+            $('#tabContent').html(html);
+        }).fail(function() {
+            GW.toast('Could not load insights', 'danger');
+            $('#tabContent').html('<div class="text-muted p-3">Failed to load insights.</div>');
         });
     }
 

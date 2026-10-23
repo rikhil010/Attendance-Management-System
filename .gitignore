@@ -28,3 +28,10 @@ Thumbs.db
 
 # Build history
 .history/
+# Reports / generated documents (kept local, not pushed)
+documents/
+# Archived / superseded files
+_archive/
+# Hardware diagnostic sketches (task scratch)
+test/fp_diag/
+test/tft_diag/

@@ -23,7 +23,7 @@ CREATE TABLE users (
     student_id INT,
     created_at DATETIME NOT NULL,
     -- case-sensitive whitelist: only the exact lowercase roles are allowed
-    CONSTRAINT chk_user_role CHECK (role COLLATE utf8mb4_bin IN ('admin', 'teacher', 'student'))
+    CONSTRAINT chk_user_role CHECK (role IN ('admin', 'teacher', 'student'))
 );
 
 CREATE TABLE departments (

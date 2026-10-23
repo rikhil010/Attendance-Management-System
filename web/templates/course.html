@@ -89,11 +89,13 @@
                     <div class="gw-table-toolbar">
                         <input class="gw-table-search" id="studentSearch" placeholder="Search students...">
                         <span class="gw-table-count" id="studentCount"></span>
+                        <button class="btn btn-outline-secondary btn-sm ms-2" id="btnSortAtt" title="Sort by attendance %">Sort by attendance</button>
+                        <button class="btn btn-outline-danger btn-sm" id="btnDefaulters" title="Show only students below the threshold">Show defaulters</button>
                     </div>
                     <div style="max-height:64vh;overflow:auto">
                         <table class="gw-table" id="studentTable">
                             <thead>
-                                <tr><th>Roll</th><th>Name</th><th>PRN</th><th data-gw-no-sort title="Fingerprint status" style="text-align:center">
+                                <tr><th>Roll</th><th>Name</th><th>PRN</th><th title="Attendance %">Att %</th><th data-gw-no-sort title="Fingerprint status" style="text-align:center">
                                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle">
                                         <path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4"/>
                                         <path d="M5 19.5C5.5 18 6 15 6 12c0-.7.12-1.37.34-2"/>
@@ -121,6 +123,7 @@
                         <button class="btn btn-outline-success btn-sm" id="btnMarkAllPresent" title="Mark all present">All Present</button>
                         <button class="btn btn-outline-danger btn-sm" id="btnMarkAbsent" title="Mark remaining absent">Rest Absent</button>
                         <button class="btn btn-outline-secondary btn-sm" id="btnExport">CSV</button>
+                        <button class="btn btn-outline-danger btn-sm" id="btnDeleteSession" title="Delete this session">Delete</button>
                     </div>
                 </div>
                 <div id="topicsBar" style="font-size:13px;background:#fff;border:1px solid #d1d9e0;border-radius:6px;padding:8px 12px;margin-bottom:8px;">
@@ -293,6 +296,26 @@
         </div>
     </div>
 
+    <!-- Grade History Modal -->
+    <div class="modal fade" id="gradeHistoryModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header"><h5>Grade History</h5><button class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <p class="text-muted small mb-2" id="ghSubtitle"></p>
+                    <div class="gw-table-wrap">
+                        <div style="max-height:55vh;overflow:auto">
+                            <table class="gw-table">
+                                <thead><tr><th>When</th><th>By</th><th>Action</th><th>Change</th></tr></thead>
+                                <tbody id="gradeHistoryBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="/static/js/jquery-3.6.0.min.js"></script>
     <script src="/static/js/bootstrap.bundle.min.js"></script>
     <script src="/static/js/app.js"></script>
@@ -349,26 +372,90 @@
         });
     }
 
+    var attSummary = {};      // student_id -> {percentage, total_sessions, defaulter}
+    var attThreshold = 75;
+    var sortByAtt = false;    // toggled by "Sort by attendance"
+    var defaultersOnly = false; // toggled by "Show defaulters"
+
     function loadStudents() {
         var batch = $('#batchSelect').val();
-        $.get('/api/course/' + courseId + '/students', {batch: batch}, function(students) {
-            var html = '';
-            var regHtml = '';
-            students.forEach(function(s) {
-                var fpCell = s.registered
-                    ? '<span class="gw-pill gw-pill-success" style="cursor:pointer" title="Re-register fingerprint" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Registered</span>'
-                    : '<button class="gw-row-btn" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Register</button>';
-                html += '<tr><td>' + esc(s.roll_no || '-') + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.prn || '-') + '</td><td style="text-align:center">' + fpCell + '</td></tr>';
-                if (!s.registered) {
-                    regHtml += '<option value="' + s.id + '">' + esc(s.name) + ' (ID:' + s.id + ')</option>';
-                }
+        // Fetch attendance summary (from the v_attendance_summary view) and the
+        // roster together, then merge by student id.
+        $.when(
+            $.get('/api/course/' + courseId + '/students', {batch: batch}),
+            $.get('/api/course/' + courseId + '/attendance_summary')
+        ).done(function(studentsRes, summaryRes) {
+            var students = studentsRes[0];
+            var summary = summaryRes[0] || {};
+            attThreshold = summary.threshold != null ? summary.threshold : 75;
+            attSummary = {};
+            (summary.students || []).forEach(function(r) { attSummary[r.student_id] = r; });
+            renderStudents(students);
+        }).fail(function() {
+            // If the summary call fails, still show the roster without %.
+            $.get('/api/course/' + courseId + '/students', {batch: batch}, function(students) {
+                attSummary = {};
+                renderStudents(students);
             });
-            $('#studentBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="4">No students in this selection</td></tr>');
-            $('#regStudentSelect').html(regHtml || '<option>All registered</option>');
-            $('#studentCount').text(students.length + ' students');
-            GW.enhanceTable('#studentTable', { search: '#studentSearch', countEl: '#studentCount' });
         });
     }
+
+    function renderStudents(students) {
+        var list = students.slice();
+        if (defaultersOnly) {
+            list = list.filter(function(s) {
+                var a = attSummary[s.id];
+                return a && a.defaulter;
+            });
+        }
+        if (sortByAtt) {
+            list.sort(function(a, b) {
+                var pa = attSummary[a.id] ? attSummary[a.id].percentage : -1;
+                var pb = attSummary[b.id] ? attSummary[b.id].percentage : -1;
+                return pa - pb;  // lowest attendance first
+            });
+        }
+        var html = '', regHtml = '';
+        list.forEach(function(s) {
+            var a = attSummary[s.id];
+            var pct = a ? a.percentage : null;
+            var isDef = a && a.defaulter;
+            var attCell = (pct === null)
+                ? '<span class="text-muted">-</span>'
+                : (isDef
+                    ? '<span class="gw-pill gw-pill-danger" title="Below ' + attThreshold + '%">' + pct + '%</span>'
+                    : '<span class="gw-pill gw-pill-success">' + pct + '%</span>');
+            var fpCell = s.registered
+                ? '<span class="gw-pill gw-pill-success" style="cursor:pointer" title="Re-register fingerprint" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Registered</span>'
+                : '<button class="gw-row-btn" onclick="registerStudent(' + s.id + ',\'' + esc(s.name) + '\')">Register</button>';
+            var rowStyle = isDef ? ' style="background:#fdecea"' : '';
+            html += '<tr' + rowStyle + '><td>' + esc(s.roll_no || '-') + '</td><td>' + esc(s.name) + '</td><td>' + esc(s.prn || '-') + '</td><td style="text-align:center">' + attCell + '</td><td style="text-align:center">' + fpCell + '</td></tr>';
+            if (!s.registered) {
+                regHtml += '<option value="' + s.id + '">' + esc(s.name) + ' (ID:' + s.id + ')</option>';
+            }
+        });
+        $('#studentBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="5">No students in this selection</td></tr>');
+        $('#regStudentSelect').html(regHtml || '<option>All registered</option>');
+        $('#studentCount').text(list.length + ' students' + (defaultersOnly ? ' (defaulters)' : ''));
+        // Only enhance (client sort/search) when not using our custom attendance sort,
+        // so our ordering is preserved.
+        if (!sortByAtt) {
+            GW.enhanceTable('#studentTable', { search: '#studentSearch', countEl: '#studentCount' });
+        }
+    }
+
+    $('#btnSortAtt').click(function() {
+        sortByAtt = !sortByAtt;
+        $(this).toggleClass('active').toggleClass('btn-secondary', sortByAtt)
+               .toggleClass('btn-outline-secondary', !sortByAtt);
+        loadStudents();
+    });
+    $('#btnDefaulters').click(function() {
+        defaultersOnly = !defaultersOnly;
+        $(this).toggleClass('active').toggleClass('btn-danger', defaultersOnly)
+               .toggleClass('btn-outline-danger', !defaultersOnly);
+        loadStudents();
+    });
 
     var sessionData = {};
     function loadSessions() {
@@ -459,26 +546,40 @@
     $('#btnStart').click(function() {
         var batch = $('#batchSelect').val();
         showStatus('Starting attendance...', 'info');
+        GW.btnLoading('#btnStart', true, 'Starting...');
         $.get('/api/course/' + courseId + '/attendance/start', {batch: batch}, function(resp) {
+            GW.btnLoading('#btnStart', false);
             if (resp.status === 'success') {
                 attendanceActive = true;
                 $('#btnStart').addClass('d-none');
                 $('#btnStop').removeClass('d-none');
-                showStatus('Attendance active — students can scan now', 'success');
                 loadSessions();
-                pollInterval = setInterval(function() {
-                    // Poll ESP32 for new marks
-                    $.get('/api/attendance', {session_id: resp.session_id}, function(ar) {
-                        if (ar.updated) {
-                            showStatus('Marked: ' + (ar.student_name || '') + ' (ID:' + ar.student_id + ')', 'success');
-                        }
-                    });
+                if (resp.device_online) {
+                    // Device reachable: scanning works, and we poll it for new marks.
+                    showStatus('Attendance active — ' + resp.loaded + ' fingerprint(s) loaded. Students can scan now.', 'success');
+                    pollInterval = setInterval(function() {
+                        $.get('/api/attendance', {session_id: resp.session_id}, function(ar) {
+                            if (ar.updated) {
+                                showStatus('Marked: ' + (ar.student_name || '') + ' (ID:' + ar.student_id + ')', 'success');
+                            }
+                        });
+                        loadAttendance();
+                    }, 2500);
+                } else {
+                    // Device offline: manual mode. No device polling (avoids timeouts).
+                    // Teacher marks attendance with the P / A buttons on each row.
+                    showStatus('Device not found — attendance started in MANUAL mode. '
+                        + 'Use the P (present) / A (absent) buttons or "All Present" to mark students.', 'warning');
                     loadAttendance();
-                }, 2500);
+                }
             } else {
                 showStatus('Failed: ' + (resp.message || ''), 'danger');
             }
-        }).fail(function() { showStatus('Cannot reach server', 'danger'); });
+        }).fail(function(xhr) {
+            GW.btnLoading('#btnStart', false);
+            var m = (xhr.responseJSON && xhr.responseJSON.message) ? xhr.responseJSON.message : 'Cannot reach server';
+            showStatus('Could not start attendance: ' + m, 'danger');
+        });
     });
 
     $('#btnStop').click(function() {
@@ -527,6 +628,32 @@
     $('#btnExport').click(function() {
         var sid = $('#sessionSelect').val();
         if (sid) window.location.href = '/api/session/' + sid + '/export';
+    });
+
+    // Delete the selected attendance session
+    $('#btnDeleteSession').click(function() {
+        var sid = $('#sessionSelect').val();
+        if (!sid || sid === 'No sessions yet') { GW.toast('Select a session first', 'warning'); return; }
+        var label = $('#sessionSelect option:selected').text();
+        GW.confirm({
+            title: 'Delete session',
+            message: 'Delete this attendance session and all its marks?\n\n' + label,
+            okText: 'Delete', danger: true
+        }).then(function(ok) {
+            if (!ok) return;
+            $.ajax({ url: '/api/session/' + sid, method: 'DELETE', success: function() {
+                GW.toast('Session deleted', 'success');
+                // If we deleted the active session, reset the Start/Stop buttons.
+                attendanceActive = false;
+                $('#btnStop').addClass('d-none');
+                $('#btnStart').removeClass('d-none');
+                if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+                loadSessions();
+                loadAttendance();
+            }, error: function(xhr) {
+                GW.toast(xhr.responseJSON ? xhr.responseJSON.message : 'Could not delete session', 'danger');
+            }});
+        });
     });
 
     // ESP32 connection panel
@@ -685,8 +812,9 @@
                 graded[r.student_id] = true;
                 var score = (r.score === null ? '-' : r.score) + (r.max_score ? ' / ' + r.max_score : '');
                 var edit = '<button class="gw-row-btn js-grade-edit" data-idx="' + i + '">Edit</button>';
+                var hist = '<button class="gw-row-btn js-grade-history" data-idx="' + i + '">History</button>';
                 var del = r.grade_id ? '<button class="gw-row-btn gw-danger js-grade-delete" data-idx="' + i + '">Delete</button>' : '';
-                html += '<tr><td>' + esc(r.roll_no || '-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.component) + '</td><td>' + esc(score) + '</td><td>' + esc(r.grade || '-') + '</td><td>' + esc(r.remarks || '') + '</td><td>' + edit + ' ' + del + '</td></tr>';
+                html += '<tr><td>' + esc(r.roll_no || '-') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.component) + '</td><td>' + esc(score) + '</td><td>' + esc(r.grade || '-') + '</td><td>' + esc(r.remarks || '') + '</td><td>' + edit + ' ' + hist + ' ' + del + '</td></tr>';
             });
             $('#gradesBody').html(html || '<tr data-gw-empty><td class="gw-empty" colspan="7">No grades entered yet</td></tr>');
             $('#grCount').text(gradeRows.length + ' entries');
@@ -712,6 +840,27 @@
         $('#grLetter').val(r.grade || '');
         $('#grRemarks').val(r.remarks || '');
         $('#grComponent').focus();
+    });
+
+    $('#gradesBody').on('click', '.js-grade-history', function() {
+        var r = gradeRows[$(this).data('idx')];
+        if (!r) return;
+        $('#ghSubtitle').text(r.name + ' · ' + r.component);
+        $('#gradeHistoryBody').html('<tr><td colspan="4" class="text-muted">Loading...</td></tr>');
+        new bootstrap.Modal('#gradeHistoryModal').show();
+        $.get('/api/course/' + courseId + '/grade_history',
+            {student_id: r.student_id, component: r.component}, function(rows) {
+            var h = '';
+            rows.forEach(function(e) {
+                var changePart = e.details.split(':').slice(1).join(':').trim();
+                h += '<tr><td>' + esc(e.created_at) + '</td><td>' + esc(e.user_name || '-') + '</td>'
+                   + '<td><span class="gw-pill gw-pill-success">' + esc(e.action) + '</span></td>'
+                   + '<td>' + esc(changePart || e.details) + '</td></tr>';
+            });
+            $('#gradeHistoryBody').html(h || '<tr><td colspan="4" class="gw-empty">No history recorded yet for this grade.</td></tr>');
+        }).fail(function(xhr) {
+            $('#gradeHistoryBody').html('<tr><td colspan="4" class="text-danger">Could not load history</td></tr>');
+        });
     });
 
     $('#gradesBody').on('click', '.js-grade-delete', function() {

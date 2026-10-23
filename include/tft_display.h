@@ -8,9 +8,12 @@
  * Drop-in replacement for the Adafruit_SSD1306 API, backed by a 320x240
  * ILI9341 TFT via TFT_eSPI. Lets all existing display.*() calls keep working.
  *
- * Flicker-free: all drawing goes to an off-screen sprite (back buffer) and is
- * pushed to the panel in one operation on display(), so no full-screen wipe is
- * ever visible. Falls back to direct drawing if the sprite can't allocate.
+ * Direct-draw implementation (no off-screen sprite). An 8-bit full-screen
+ * sprite proved unreliable on this breadboard wiring (garbled / repeated /
+ * partially-rendered frames), so we draw straight to the panel. Text is drawn
+ * opaque (foreground over a solid background colour) so each redraw cleanly
+ * overwrites the previous one without a full-screen wipe — no visible flicker
+ * for the simple text screens this app uses.
  *
  * The original UI targeted a 128x64 OLED; coordinates/text are scaled up for
  * the 320x240 landscape panel.
@@ -30,65 +33,60 @@ class TftDisplay {
 public:
     TFT_eSPI tft;
 
-    TftDisplay() : _spr(&tft) {}
+    TftDisplay() {}
 
     bool begin(uint8_t = 0, uint8_t = 0) {
         tft.init();
         tft.setRotation(1);                 // landscape: 320 x 240
         tft.fillScreen(TFT_BLACK);
-
-        _spr.setColorDepth(8);              // 8-bit back buffer (~75KB)
-        void* buf = _spr.createSprite(SCREEN_W, SCREEN_H);
-        _useSprite = (buf != nullptr);
-        if (!_useSprite) Serial.println("[TFT] Sprite alloc failed - direct draw");
-
-        _spr.setTextColor(TFT_WHITE);
-        tft.setTextColor(TFT_WHITE);
+        tft.setTextColor(TFT_WHITE, TFT_BLACK);   // opaque text (fg over bg)
+        tft.setTextSize(2);
+        _fg = TFT_WHITE;
         return true;
     }
 
+    // Clear the panel. Done once per full redraw; text then overwrites opaquely.
     void clearDisplay() {
-        if (_useSprite) _spr.fillSprite(TFT_BLACK);
-        else            tft.fillScreen(TFT_BLACK);
+        tft.fillScreen(TFT_BLACK);
         setCursorRaw(0, 0);
     }
 
-    void display() { if (_useSprite) _spr.pushSprite(0, 0); }
+    // No back buffer to push — drawing already happened on the panel.
+    void display() {}
 
     void setTextSize(uint8_t s) {                 // OLED size 1->2, 2->3
-        uint8_t t = s + 1;
-        if (_useSprite) _spr.setTextSize(t); else tft.setTextSize(t);
+        tft.setTextSize(s + 1);
     }
 
     void setTextColor(uint16_t c) {
-        uint16_t col = (c == 0) ? TFT_BLACK : TFT_WHITE;
-        if (_useSprite) _spr.setTextColor(col); else tft.setTextColor(col);
+        _fg = (c == 0) ? TFT_BLACK : TFT_WHITE;
+        tft.setTextColor(_fg, TFT_BLACK);         // always opaque over black
     }
     void setTextColor(uint16_t fg, uint16_t bg) {
         uint16_t f = (fg == 0) ? TFT_BLACK : TFT_WHITE;
         uint16_t b = (bg == 0) ? TFT_BLACK : TFT_WHITE;
-        if (_useSprite) _spr.setTextColor(f, b); else tft.setTextColor(f, b);
+        _fg = f;
+        tft.setTextColor(f, b);
     }
 
     void setCursor(int16_t x, int16_t y) {
         setCursorRaw((int16_t)(x * SCALE_X), (int16_t)(y * SCALE_Y));
     }
 
-    void print(const String& s)   { if (_useSprite) _spr.print(s);   else tft.print(s); }
-    void print(const char* s)     { if (_useSprite) _spr.print(s);   else tft.print(s); }
-    void print(int v)             { if (_useSprite) _spr.print(v);   else tft.print(v); }
-    void println(const String& s) { if (_useSprite) _spr.println(s); else tft.println(s); }
-    void println(const char* s)   { if (_useSprite) _spr.println(s); else tft.println(s); }
-    void println(int v)           { if (_useSprite) _spr.println(v); else tft.println(v); }
-    void println()                { if (_useSprite) _spr.println();  else tft.println(); }
+    void print(const String& s)   { tft.print(s); }
+    void print(const char* s)     { tft.print(s); }
+    void print(int v)             { tft.print(v); }
+    void println(const String& s) { tft.println(s); }
+    void println(const char* s)   { tft.println(s); }
+    void println(int v)           { tft.println(v); }
+    void println()                { tft.println(); }
 
 private:
     void setCursorRaw(int16_t x, int16_t y) {
-        if (_useSprite) _spr.setCursor(x, y); else tft.setCursor(x, y);
+        tft.setCursor(x, y);
     }
 
-    TFT_eSprite _spr;
-    bool _useSprite = false;
+    uint16_t _fg = TFT_WHITE;
 
     static constexpr int16_t SCREEN_W = 320;
     static constexpr int16_t SCREEN_H = 240;

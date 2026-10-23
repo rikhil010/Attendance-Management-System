@@ -113,7 +113,7 @@ def discover_esp32_host():
     cfg = get_config()
     
     likely_hosts = []
-    for h in [last_working_host, cfg.get("esp32_ip"), "192.168.0.103"]:
+    for h in [last_working_host, cfg.get("esp32_ip"), "192.168.0.150"]:
         if h and h not in likely_hosts:
             likely_hosts.append(h)
 

@@ -16,8 +16,8 @@
 #define PIN_TFT_SCLK        18      // D18 → TFT SCK
 #define PIN_TFT_CS           5      // D5  → TFT CS
 #define PIN_TFT_DC           2      // D2  → TFT DC
-#define PIN_TFT_RST         26      // D26 → TFT RESET
-#define PIN_TFT_BL          15      // D15 → TFT backlight (LED)
+#define PIN_TFT_RST          4      // D4  → TFT RESET
+#define PIN_TFT_BL          22      // D22 → TFT backlight (LED)
 // SDO(MISO) left unconnected — display is write-only
 
 // ─── SD Card (dedicated HSPI-capable bus) ────────────────────
@@ -29,7 +29,7 @@
 // ─── Fingerprint Sensor (HLK-FPM383C, UART2) ─────────────────
 #define PIN_FP_RX           16      // D16 (RX2) ← Sensor TX
 #define PIN_FP_TX           17      // D17 (TX2) → Sensor RX
-#define PIN_FP_WAKE         14      // D14 → Sensor WAKE/IRQ
+#define PIN_FP_WAKE         35      // D35 → Sensor WAKE/IRQ (input-only pin; read only)
 #define FP_BAUD_RATE        57600
 
 // ─── Power control ────────────────────────────────────────────

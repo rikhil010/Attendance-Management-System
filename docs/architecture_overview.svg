@@ -1,0 +1,100 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="700" viewBox="0 0 980 700" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3b4a5a"/>
+    </marker>
+    <marker id="arP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8e44ad"/>
+    </marker>
+    <style>
+      .ttl   { font-size: 15px; font-weight: 700; fill: #ffffff; }
+      .sub   { font-size: 12px; fill: #eaf0f6; }
+      .band  { font-size: 15px; font-weight: 700; fill: #2c3e50; }
+      .lbl   { font-size: 12.5px; font-style: italic; fill: #566; }
+      .dbttl { font-size: 19px; font-weight: 800; fill: #ffffff; }
+      .dbsub { font-size: 12.5px; fill: #d7dde4; }
+    </style>
+  </defs>
+
+  <rect width="980" height="700" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="490" y="32" text-anchor="middle" font-size="24" font-weight="800" fill="#1b2a4a">GWASOAT — System Architecture</text>
+
+  <!-- Web UI pill -->
+  <rect x="300" y="46" width="380" height="34" rx="17" fill="#17a589"/>
+  <text x="490" y="68" text-anchor="middle" class="ttl">Web UI (Bootstrap 5 + jQuery)</text>
+
+  <!-- ===================== ESP32 DEVICE band ===================== -->
+  <rect x="40" y="96" width="900" height="130" rx="14" fill="#e8edf4"/>
+  <text x="70" y="124" class="band">ESP32 DEVICE  (C++ / Arduino firmware)</text>
+
+  <!-- device cards -->
+  <g>
+    <rect x="70"  y="138" width="150" height="66" rx="10" fill="#1e8449"/>
+    <text x="145" y="168" text-anchor="middle" class="ttl">FPM383C</text>
+    <text x="145" y="187" text-anchor="middle" class="sub">Fingerprint</text>
+
+    <rect x="248" y="138" width="150" height="66" rx="10" fill="#1e8449"/>
+    <text x="323" y="168" text-anchor="middle" class="ttl">MicroSD</text>
+    <text x="323" y="187" text-anchor="middle" class="sub">Offline cache</text>
+
+    <rect x="426" y="138" width="150" height="66" rx="10" fill="#1e8449"/>
+    <text x="501" y="168" text-anchor="middle" class="ttl">SSD1306</text>
+    <text x="501" y="187" text-anchor="middle" class="sub">OLED display</text>
+
+    <rect x="604" y="138" width="150" height="66" rx="10" fill="#1f5fb0"/>
+    <text x="679" y="168" text-anchor="middle" class="ttl">ESP32 MCU</text>
+    <text x="679" y="187" text-anchor="middle" class="sub">WiFi + BLE</text>
+
+    <rect x="782" y="138" width="128" height="66" rx="10" fill="#6b7785"/>
+    <text x="846" y="168" text-anchor="middle" class="ttl">TP4056</text>
+    <text x="846" y="187" text-anchor="middle" class="sub">USB-C LiPo</text>
+  </g>
+
+  <!-- link ESP32 -> Desktop -->
+  <line x1="501" y1="226" x2="501" y2="292" class="band" stroke="#3b4a5a" stroke-width="2.5" marker-end="url(#ar)"/>
+  <text x="501" y="262" text-anchor="middle" class="lbl">WiFi HTTP / BLE GATT</text>
+
+  <!-- ===================== DESKTOP APP band ===================== -->
+  <rect x="40" y="296" width="900" height="130" rx="14" fill="#e8edf4"/>
+  <text x="70" y="324" class="band">DESKTOP APPLICATION  (Python / Flask, pywebview window)</text>
+
+  <g>
+    <rect x="92"  y="338" width="168" height="66" rx="10" fill="#1f5fb0"/>
+    <text x="176" y="368" text-anchor="middle" class="ttl">Flask routes</text>
+    <text x="176" y="387" text-anchor="middle" class="sub">api / auth / RBAC</text>
+
+    <rect x="276" y="338" width="168" height="66" rx="10" fill="#2e86c1"/>
+    <text x="360" y="368" text-anchor="middle" class="ttl">Connection mgr</text>
+    <text x="360" y="387" text-anchor="middle" class="sub">WiFi + BLE</text>
+
+    <rect x="460" y="338" width="168" height="66" rx="10" fill="#8e44ad"/>
+    <text x="544" y="368" text-anchor="middle" class="ttl">DB layer</text>
+    <text x="544" y="387" text-anchor="middle" class="sub">mysql-connector</text>
+
+    <rect x="644" y="338" width="168" height="66" rx="10" fill="#e67e22"/>
+    <text x="728" y="368" text-anchor="middle" class="ttl">Cloud sync</text>
+    <text x="728" y="387" text-anchor="middle" class="sub">templates + logs</text>
+  </g>
+
+  <!-- link Desktop -> MySQL (purple, angled) -->
+  <path d="M300,426 L360,496" fill="none" stroke="#8e44ad" stroke-width="2.5" marker-end="url(#arP)"/>
+  <text x="250" y="452" text-anchor="middle" class="lbl" fill="#8e44ad">SQL (port 3306)</text>
+
+  <!-- link Desktop -> SQLite settings -->
+  <line x1="728" y1="426" x2="728" y2="496" stroke="#3b4a5a" stroke-width="2.5" marker-end="url(#ar)"/>
+  <text x="728" y="452" text-anchor="middle" class="lbl">settings</text>
+
+  <!-- ===================== MySQL block (fixed: no overlap) ===================== -->
+  <rect x="170" y="500" width="380" height="150" rx="14" fill="#16233e"/>
+  <text x="360" y="548" text-anchor="middle" class="dbttl">MySQL 8.0 — gwasoat</text>
+  <text x="360" y="582" text-anchor="middle" class="dbsub">14 tables, views, triggers,</text>
+  <text x="360" y="602" text-anchor="middle" class="dbsub">stored procedures, RBAC</text>
+
+  <!-- ===================== SQLite block (fixed: no overlap) ===================== -->
+  <rect x="610" y="500" width="240" height="150" rx="14" fill="#5d6d7e"/>
+  <text x="730" y="548" text-anchor="middle" class="dbttl">SQLite</text>
+  <text x="730" y="582" text-anchor="middle" class="dbsub">attendance.db</text>
+  <text x="730" y="602" text-anchor="middle" class="dbsub">network settings</text>
+</svg>

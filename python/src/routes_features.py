@@ -12,7 +12,8 @@ from datetime import datetime
 from flask import render_template, request, jsonify, session, send_file
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from models import get_db, hash_password, log_action, ensure_student_account
+from models import (get_db, hash_password, log_action, ensure_student_account,
+                    get_defaulter_threshold, set_setting, grade_triggers_installed)
 from database import _fetchone, _fetchall, _execute
 from auth import (login_required, admin_required, get_current_user,
                   permission_required, staff_required,
@@ -105,14 +106,51 @@ def setup_feature_routes(app):
 
     # ─── Reports / defaulters ────────────────────────────────
     def _build_report(course_id, args):
-        threshold = float(args.get('threshold', 75))
-        where, params = _date_filter(args, alias='ses')
+        """Build the per-student attendance report for a course.
+
+        When no date range is given, the per-student totals and percentage are
+        read directly from the v_attendance_summary VIEW (no Python-side
+        percentage maths). A date range falls back to a session-scoped query,
+        because the view aggregates over all sessions.
+        The defaulter threshold defaults to the configurable app_settings value.
+        """
         db = get_db()
+        default_threshold = get_defaulter_threshold(db)
+        threshold = float(args.get('threshold', default_threshold))
+        start, end = args.get('start'), args.get('end')
+
+        if not start and not end:
+            # Canonical path: read straight from the view.
+            total_row = _fetchone(db,
+                "SELECT COUNT(*) c FROM attendance_sessions WHERE course_id=%s", (course_id,))
+            total_sessions = total_row['c'] if total_row else 0
+            rows = _fetchall(db, '''
+                SELECT student_id AS id, student_name AS name, prn, roll_no,
+                       total_sessions AS held, present, percentage AS percent
+                FROM v_attendance_summary
+                WHERE course_id=%s
+                ORDER BY roll_no, student_name
+            ''', (course_id,))
+            db.close()
+            report = []
+            for r in rows:
+                held = r['held'] or 0
+                present = r['present'] or 0
+                pct = float(r['percent']) if r['percent'] is not None else 0.0
+                report.append({
+                    'id': r['id'], 'name': r['name'], 'prn': r['prn'] or '',
+                    'roll_no': r['roll_no'] or '', 'held': held, 'present': present,
+                    'absent': held - present, 'percent': pct,
+                    'defaulter': held > 0 and pct < threshold
+                })
+            return total_sessions, threshold, report
+
+        # Date-filtered path: the view cannot scope by date, so aggregate directly.
+        where, params = _date_filter(args, alias='ses')
         count_row = _fetchone(db,
             "SELECT COUNT(*) c FROM attendance_sessions ses WHERE ses.course_id=%s" + where,
             tuple([course_id] + params))
         total_sessions = count_row['c'] if count_row else 0
-
         rows = _fetchall(db, '''
             SELECT s.id, s.name, s.prn, s.roll_no,
                    COUNT(sa.id) AS held,
@@ -125,7 +163,6 @@ def setup_feature_routes(app):
             GROUP BY s.id ORDER BY s.roll_no, s.name
         ''', tuple([course_id, course_id] + params))
         db.close()
-
         report = []
         for r in rows:
             held = r['held'] or 0
@@ -165,6 +202,86 @@ def setup_feature_routes(app):
         output.seek(0)
         return send_file(io.BytesIO(output.getvalue().encode()), mimetype='text/csv',
                          as_attachment=True, download_name=f'course_{course_id}_report.csv')
+
+    # ─── Attendance summary (from the v_attendance_summary VIEW) ─────────
+    @app.route('/api/course/<int:course_id>/attendance_summary')
+    @login_required
+    @course_owner_required
+    def attendance_summary(course_id):
+        """Per-student attendance summary for a course, read from the view."""
+        db = get_db()
+        threshold = get_defaulter_threshold(db)
+        rows = _fetchall(db, '''
+            SELECT student_id, student_name, roll_no, prn,
+                   total_sessions, present, percentage
+            FROM v_attendance_summary
+            WHERE course_id=%s
+            ORDER BY roll_no, student_name
+        ''', (course_id,))
+        db.close()
+        return jsonify({
+            'threshold': threshold,
+            'students': [{
+                'student_id': r['student_id'], 'name': r['student_name'],
+                'roll_no': r['roll_no'] or '', 'prn': r['prn'] or '',
+                'total_sessions': r['total_sessions'], 'present': r['present'],
+                'percentage': float(r['percentage']) if r['percentage'] is not None else 0.0,
+                'defaulter': (r['total_sessions'] or 0) > 0
+                             and float(r['percentage'] or 0) < threshold,
+            } for r in rows]
+        })
+
+    @app.route('/api/course/<int:course_id>/defaulters')
+    @permission_required('report.defaulters')
+    @course_owner_required
+    def course_defaulters(course_id):
+        """Students below the (configurable) attendance threshold, from the view."""
+        db = get_db()
+        threshold = float(request.args.get('threshold', get_defaulter_threshold(db)))
+        rows = _fetchall(db, '''
+            SELECT student_id, student_name, roll_no, prn,
+                   total_sessions, present, percentage
+            FROM v_attendance_summary
+            WHERE course_id=%s AND total_sessions > 0 AND percentage < %s
+            ORDER BY percentage ASC, roll_no
+        ''', (course_id, threshold))
+        db.close()
+        return jsonify({
+            'threshold': threshold,
+            'defaulters': [{
+                'student_id': r['student_id'], 'name': r['student_name'],
+                'roll_no': r['roll_no'] or '', 'prn': r['prn'] or '',
+                'total_sessions': r['total_sessions'], 'present': r['present'],
+                'percentage': float(r['percentage']) if r['percentage'] is not None else 0.0,
+            } for r in rows]
+        })
+
+    @app.route('/api/settings/defaulter_threshold', methods=['GET', 'POST'])
+    @login_required
+    def defaulter_threshold_setting():
+        """Read (any staff) or update (admin only) the configurable threshold."""
+        user = get_current_user()
+        db = get_db()
+        if request.method == 'POST':
+            if user['role'] != 'admin':
+                db.close()
+                return jsonify({'status': 'error', 'message': 'Admin access required'}), 403
+            try:
+                value = float(request.form.get('value', ''))
+            except ValueError:
+                db.close()
+                return jsonify({'status': 'error', 'message': 'Threshold must be a number'}), 400
+            if not 0 <= value <= 100:
+                db.close()
+                return jsonify({'status': 'error', 'message': 'Threshold must be between 0 and 100'}), 400
+            set_setting(db, 'defaulter_threshold', value)
+            db.commit()
+            db.close()
+            log_action(user, 'set_defaulter_threshold', str(value))
+            return jsonify({'status': 'success', 'threshold': value})
+        threshold = get_defaulter_threshold(db)
+        db.close()
+        return jsonify({'threshold': threshold})
 
     # ─── Bulk student import ─────────────────────────────────
     @app.route('/api/course/<int:course_id>/import_students', methods=['POST'])
@@ -398,10 +515,126 @@ def setup_feature_routes(app):
     @app.route('/api/admin/audit')
     @admin_required
     def admin_audit():
+        """Audit log, newest first, with optional action and date-range filters."""
+        action = (request.args.get('action') or '').strip()
+        start = (request.args.get('start') or '').strip()
+        end = (request.args.get('end') or '').strip()
+        where, params = [], []
+        if action:
+            where.append("action = %s")
+            params.append(action)
+        if start:
+            where.append("date(created_at) >= date(%s)")
+            params.append(start)
+        if end:
+            where.append("date(created_at) <= date(%s)")
+            params.append(end)
+        sql = "SELECT user_name, action, details, created_at FROM audit_log"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT 500"
+        db = get_db()
+        rows = _fetchall(db, sql, tuple(params))
+        db.close()
+        return jsonify([{**r, 'created_at': str(r['created_at'])} for r in rows])
+
+    @app.route('/api/admin/audit/actions')
+    @admin_required
+    def admin_audit_actions():
+        """Distinct action names present in the audit log, for the filter dropdown."""
+        db = get_db()
+        rows = _fetchall(db, "SELECT DISTINCT action FROM audit_log ORDER BY action")
+        db.close()
+        return jsonify([r['action'] for r in rows])
+
+    # ─── DB Insights (admin): each metric is a real JOIN/GROUP BY query ──
+    @app.route('/api/admin/insights')
+    @admin_required
+    def admin_insights():
+        """Institution-wide metrics, computed entirely in SQL (no Python maths):
+           average grade per course, attendance % per class, sessions per teacher."""
+        db = get_db()
+
+        # Average grade per course — JOIN grades to courses, GROUP BY course,
+        # AVG of the percentage score. Only scored entries count.
+        avg_grade = _fetchall(db, '''
+            SELECT c.code, c.name AS course,
+                   COUNT(g.id)                                AS graded_entries,
+                   ROUND(AVG(g.score / g.max_score * 100), 1) AS avg_percent
+            FROM courses c
+            LEFT JOIN grades g ON g.course_id = c.id AND g.score IS NOT NULL
+            GROUP BY c.id, c.code, c.name
+            ORDER BY avg_percent DESC
+        ''')
+
+        # Attendance % per class — JOIN class -> sessions -> session_attendance,
+        # GROUP BY class, AVG of (status='Present') as a percentage.
+        attendance_by_class = _fetchall(db, '''
+            SELECT cl.name AS class_name,
+                   COUNT(DISTINCT ses.id)                        AS sessions,
+                   COUNT(sa.id)                                  AS marks,
+                   ROUND(AVG(sa.status = 'Present') * 100, 1)    AS attendance_percent
+            FROM classes cl
+            LEFT JOIN attendance_sessions ses ON ses.class_id = cl.id
+            LEFT JOIN session_attendance  sa  ON sa.session_id = ses.id
+            GROUP BY cl.id, cl.name
+            ORDER BY attendance_percent DESC
+        ''')
+
+        # Sessions per teacher — JOIN sessions to users (teacher), GROUP BY teacher.
+        sessions_by_teacher = _fetchall(db, '''
+            SELECT u.name AS teacher,
+                   COUNT(ses.id)                              AS session_count,
+                   COUNT(DISTINCT ses.course_id)             AS courses_taught
+            FROM users u
+            LEFT JOIN attendance_sessions ses ON ses.teacher_id = u.id
+            WHERE u.role IN ('teacher', 'admin')
+            GROUP BY u.id, u.name
+            HAVING COUNT(ses.id) > 0
+            ORDER BY session_count DESC
+        ''')
+
+        def fnum(v):
+            return float(v) if v is not None else 0.0
+        db.close()
+        return jsonify({
+            'avg_grade_per_course': [
+                {'code': r['code'] or '', 'course': r['course'],
+                 'graded_entries': r['graded_entries'],
+                 'avg_percent': fnum(r['avg_percent'])} for r in avg_grade],
+            'attendance_per_class': [
+                {'class_name': r['class_name'], 'sessions': r['sessions'],
+                 'marks': r['marks'],
+                 'attendance_percent': fnum(r['attendance_percent'])} for r in attendance_by_class],
+            'sessions_per_teacher': [
+                {'teacher': r['teacher'], 'session_count': r['session_count'],
+                 'courses_taught': r['courses_taught']} for r in sessions_by_teacher],
+        })
+
+    # ─── Grade change history (from audit_log, filtered to grade actions) ──
+    @app.route('/api/course/<int:course_id>/grade_history')
+    @permission_required('grade.view')
+    @course_owner_required
+    def grade_history(course_id):
+        """History of grade changes for a course (optionally one student/component),
+        read from the audit entries written by the grade triggers."""
+        student_id = request.args.get('student_id')
+        component = request.args.get('component')
+        # The trigger records 'student <id>, course <course_id>, component <name>: ...'
+        like = f"%course {course_id}%"
+        clauses = ["action IN ('GRADE_INSERT','GRADE_UPDATE')", "details LIKE %s"]
+        params = [like]
+        if student_id:
+            clauses.append("details LIKE %s")
+            params.append(f"student {int(student_id)},%")
+        if component:
+            clauses.append("details LIKE %s")
+            params.append(f"%component {component}:%")
         db = get_db()
         rows = _fetchall(db,
             "SELECT user_name, action, details, created_at FROM audit_log "
-            "ORDER BY id DESC LIMIT 200")
+            "WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT 200",
+            tuple(params))
         db.close()
         return jsonify([{**r, 'created_at': str(r['created_at'])} for r in rows])
 
@@ -515,19 +748,58 @@ def setup_feature_routes(app):
             db.close()
             return jsonify({'status': 'error', 'message': 'Student not in this course'}), 400
 
-        _execute(db, '''
-            INSERT INTO grades
-                (student_id, course_id, component, score, max_score, grade, remarks, updated_by, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON DUPLICATE KEY UPDATE
-                score=VALUES(score), max_score=VALUES(max_score),
-                grade=VALUES(grade), remarks=VALUES(remarks),
-                updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)
-        ''', (student_id, course_id, component, score, max_score,
-              grade or None, remarks or None, user['id'], now))
-        db.commit()
+        # Read the prior score so the audit entry can show old -> new, and decide
+        # whether this will be an INSERT or an UPDATE.
+        prior = _fetchone(db,
+            "SELECT score FROM grades WHERE student_id=%s AND course_id=%s AND component=%s",
+            (student_id, course_id, component))
+        is_update = prior is not None
+        old_score = prior['score'] if prior else None
+
+        try:
+            _execute(db, '''
+                INSERT INTO grades
+                    (student_id, course_id, component, score, max_score, grade, remarks, updated_by, updated_at)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ON DUPLICATE KEY UPDATE
+                    score=VALUES(score), max_score=VALUES(max_score),
+                    grade=VALUES(grade), remarks=VALUES(remarks),
+                    updated_by=VALUES(updated_by), updated_at=VALUES(updated_at)
+            ''', (student_id, course_id, component, score, max_score,
+                  grade or None, remarks or None, user['id'], now))
+            db.commit()
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            db.close()
+            # The CHECK constraint chk_grade_score (score within 0..max_score)
+            # is the database's last-line guard. Translate its violation (MySQL
+            # error 3819) into a friendly message instead of a 500.
+            if '3819' in str(e) or 'chk_grade_score' in str(e):
+                return jsonify({'status': 'error',
+                                'message': 'Score must be between 0 and the max score.'}), 400
+            return jsonify({'status': 'error', 'message': f'Could not save grade: {e}'}), 400
+
+        # Auditing: the DB triggers (trg_grades_audit_insert / trg_grades_audit)
+        # record this automatically WHEN THEY ARE INSTALLED. If they are not
+        # (e.g. the server flag log_bin_trust_function_creators was off, error
+        # 1419), fall back to logging the same entry from the app so History and
+        # the GRADE_* filters still work. The check prevents double-logging.
+        if not grade_triggers_installed(db):
+            def _fmt(v):
+                return 'NULL' if v is None else (f'{float(v):g}')
+            if is_update:
+                details = (f'student {student_id}, course {course_id}, component {component}: '
+                           f'score {_fmt(old_score)} -> {_fmt(score)} (max {max_score:g})')
+                action = 'GRADE_UPDATE'
+            else:
+                details = (f'student {student_id}, course {course_id}, component {component}: '
+                           f'set {_fmt(score)}/{max_score:g}')
+                action = 'GRADE_INSERT'
+            log_action(user, action, details)
         db.close()
-        log_action(user, 'save_grade', f'course {course_id} student {student_id} {component}')
         return jsonify({'status': 'success'})
 
     @app.route('/api/grades/<int:grade_id>', methods=['DELETE'])

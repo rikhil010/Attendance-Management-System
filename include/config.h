@@ -25,7 +25,7 @@ public:
             Serial.println("[CONFIG] No config file found, using defaults");
             config["wifi_ssid"] = "Vaswani_2.4";
             config["wifi_password"] = "*******";
-            config["static_ip"] = "192.168.0.103";
+            config["static_ip"] = "192.168.0.150";
             config["gateway"] = "192.168.0.1";
             config["subnet"] = "255.255.255.0";
             config["use_mdns"] = false;
@@ -95,7 +95,7 @@ public:
     }
 
     String getStaticIP() const {
-        return get("static_ip", "192.168.0.103");
+        return get("static_ip", "192.168.0.150");
     }
 
     String getGateway() const {
@@ -125,7 +125,7 @@ public:
         config.clear();
         config["wifi_ssid"] = "Vaswani_2.4";
         config["wifi_password"] = "*******";
-        config["static_ip"] = "192.168.0.103";
+        config["static_ip"] = "192.168.0.150";
         config["gateway"] = "192.168.0.1";
         config["subnet"] = "255.255.255.0";
         config["use_mdns"] = false;

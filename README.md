@@ -56,18 +56,18 @@ dedicated `gwasoat_user` account, all tables, the RBAC seed data and a default
 admin login.
 
 ```bash
-mysql -u root -p < attendence_databse.sql
+mysql -u root -p < dbms/attendence_databse.sql
 ```
 
 Optionally load the DBMS lab demonstration objects (views, stored procedures,
 functions, triggers and a cursor):
 
 ```bash
-mysql -u root -p gwasoat < dbms_syllabus_demo.sql
+mysql -u root -p gwasoat < dbms/dbms_syllabus_demo.sql
 ```
 
 > **Note:** the app connects as `gwasoat_user`. If you change the database name,
-> user or password in `attendence_databse.sql`, update the matching `DB_CONFIG`
+> user or password in `dbms/attendence_databse.sql`, update the matching `DB_CONFIG`
 > values in `python/src/database.py` and `python/src/models.py`.
 
 ### 3. Install Python dependencies
@@ -105,7 +105,7 @@ python python/src/app.py
 The app opens in a native window. It also serves at
 <http://127.0.0.1:5000/> if you prefer a browser.
 
-**Default admin login** (created by `attendence_databse.sql`):
+**Default admin login** (created by `dbms/attendence_databse.sql`):
 
 - Email: `admin@gwasoat.local`
 - Password: `admin123`  *(change this after first login)*
@@ -155,9 +155,13 @@ Attendance-Management-System/
 │   └── config.py             # Local settings (SQLite)
 ├── web/                      # Front end (Bootstrap 5 + jQuery), served by Flask
 ├── hardware/GWASOAT_PCB/     # KiCad 2-layer PCB design
-├── docs/                     # Documentation, ER diagram, architecture diagrams
-├── attendence_databse.sql    # MySQL schema + seed data (run first)
-├── dbms_syllabus_demo.sql    # Views, procedures, functions, triggers, cursor
+├── docs/                     # Diagrams (ER, architecture) + report images
+├── documents/                # Project reports (.docx / .md) + generate_report.py
+├── dbms/                     # All SQL: schema, DBMS features, syllabus demo, queries
+│   ├── attendence_databse.sql    # MySQL schema + seed data (run first)
+│   ├── 002_dbms_features.sql     # View, grade triggers, start_session procedure
+│   ├── dbms_syllabus_demo.sql    # Views, procedures, functions, triggers, cursor
+│   └── demo_queries.sql          # Sample CALL / SELECT queries
 ├── requirements.txt          # Python dependencies
 ├── platformio.ini            # PlatformIO build config
 └── start.bat                 # Desktop app launcher (Windows)
@@ -181,7 +185,7 @@ Attendance-Management-System/
 ## Troubleshooting
 
 - **`No module named 'mysql'`** — run `pip install -r requirements.txt`; the MySQL driver is required.
-- **`Access denied for user 'gwasoat_user'`** — the schema script did not run, or the credentials in `database.py` / `models.py` do not match `attendence_databse.sql`.
+- **`Access denied for user 'gwasoat_user'`** — the schema script did not run, or the credentials in `database.py` / `models.py` do not match `dbms/attendence_databse.sql`.
 - **App window is blank** — make sure nothing else is using port 5000, then restart.
 - **ESP32 not found** — confirm the device and laptop are on the same WiFi, or set the device IP in the app's network settings. BLE fallback requires `bleak` installed.
 

@@ -153,14 +153,22 @@ def setup_student_routes(app):
             WHERE ses.course_id = %s
             ORDER BY ses.id DESC
         ''', (sid, course_id))
+
+        # Canonical summary (total_sessions / present / percentage) from the view,
+        # scoped to this student only — same number teachers and admin see.
+        summ = _fetchone(db, '''
+            SELECT total_sessions, present, percentage
+            FROM v_attendance_summary WHERE course_id=%s AND student_id=%s
+        ''', (course_id, sid))
         db.close()
 
-        held = sum(1 for r in rows if r['status'] in ('Present', 'Absent'))
-        present = sum(1 for r in rows if r['status'] == 'Present')
+        held = summ['total_sessions'] if summ else 0
+        present = summ['present'] if summ else 0
+        pct = float(summ['percentage']) if summ and summ['percentage'] is not None else 0.0
         return jsonify({
             'course': course,
             'summary': {'held': held, 'present': present, 'absent': held - present,
-                        'percent': round(present / held * 100, 1) if held else 0.0},
+                        'percent': pct},
             'sessions': [{
                 'session_id': r['session_id'],
                 'started_at': str(r['started_at']),

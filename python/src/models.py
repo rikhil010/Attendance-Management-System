@@ -247,6 +247,9 @@ def initialize_new_schema():
     # Seed role → permission mapping (idempotent)
     _seed_permissions(db)
 
+    # Create DBMS feature objects (views, triggers, procedures) and seed settings
+    _apply_dbms_features(db)
+
     # Backfill: ensure every existing student has a login account
     _backfill_student_accounts(db)
 
@@ -288,7 +291,7 @@ ROLE_PERMISSIONS = {
     'admin': ['*'],  # wildcard — full access
     'teacher': [
         'course.view', 'course.manage_students', 'attendance.run',
-        'attendance.mark', 'report.view', 'report.export',
+        'attendance.mark', 'report.view', 'report.export', 'report.defaulters',
         'grade.view', 'grade.edit', 'timetable.view', 'profile.edit',
     ],
     'student': [
@@ -296,6 +299,166 @@ ROLE_PERMISSIONS = {
         'self.timetable.view', 'self.class.view', 'profile.edit',
     ],
 }
+
+
+def _apply_dbms_features(db):
+    """Create/refresh the DBMS feature objects (idempotent).
+
+    Mirrors dbms/002_dbms_features.sql so the features work whether or not
+    the migration file was run by hand. Safe to call on every startup.
+
+    Feature 1: v_attendance_summary view + defaulter_threshold setting.
+    """
+    try:
+        # Attendance summary view (per student, per course). Counts status='Present'.
+        _execute(db, "DROP VIEW IF EXISTS v_attendance_summary")
+        _execute(db, '''
+            CREATE VIEW v_attendance_summary AS
+            SELECT
+                cs.course_id   AS course_id,
+                c.name         AS course_name,
+                c.code         AS course_code,
+                s.id           AS student_id,
+                s.name         AS student_name,
+                s.roll_no      AS roll_no,
+                s.prn          AS prn,
+                COUNT(DISTINCT ses.id) AS total_sessions,
+                COUNT(DISTINCT CASE WHEN sa.status='Present' THEN ses.id END) AS present,
+                CASE WHEN COUNT(DISTINCT ses.id)=0 THEN 0.0
+                     ELSE ROUND(COUNT(DISTINCT CASE WHEN sa.status='Present' THEN ses.id END)
+                                / COUNT(DISTINCT ses.id) * 100, 1)
+                END AS percentage
+            FROM course_students cs
+            JOIN students s ON s.id = cs.student_id
+            JOIN courses  c ON c.id = cs.course_id
+            LEFT JOIN attendance_sessions ses ON ses.course_id = cs.course_id
+            LEFT JOIN session_attendance  sa  ON sa.session_id = ses.id
+                                              AND sa.student_id = cs.student_id
+            GROUP BY cs.course_id, c.name, c.code, s.id, s.name, s.roll_no, s.prn
+        ''')
+
+        # Configurable defaulter threshold (keep existing value if already set).
+        _execute(db,
+            "INSERT INTO app_settings (`key`, value) VALUES ('defaulter_threshold', '75') "
+            "ON DUPLICATE KEY UPDATE value = value")
+        print("[DB] DBMS features applied (v_attendance_summary)")
+    except Exception as e:
+        print(f"[DB] DBMS view/setting apply skipped: {e}")
+
+    # Feature 2: grade audit triggers (AFTER INSERT / AFTER UPDATE on grades).
+    # Kept in its OWN try-block: creating triggers needs either SUPER or the
+    # server flag log_bin_trust_function_creators=1 when binary logging is on.
+    # If that is not set, trigger creation fails with MySQL error 1419 — we log
+    # a clear hint and continue (the app still works; grade changes just are not
+    # auto-audited until the triggers are installed via the migration as root).
+    try:
+        _execute(db, "DROP TRIGGER IF EXISTS trg_grades_audit_insert")
+        _execute(db, "DROP TRIGGER IF EXISTS trg_grades_audit")
+        _execute(db, '''
+            CREATE TRIGGER trg_grades_audit_insert
+            AFTER INSERT ON grades
+            FOR EACH ROW
+            BEGIN
+                DECLARE v_user_name VARCHAR(255);
+                SELECT name INTO v_user_name FROM users WHERE id = NEW.updated_by;
+                INSERT INTO audit_log (user_id, user_name, action, details, created_at)
+                VALUES (NEW.updated_by, COALESCE(v_user_name, 'system'), 'GRADE_INSERT',
+                        CONCAT('student ', NEW.student_id, ', course ', NEW.course_id,
+                               ', component ', NEW.component,
+                               ': set ', COALESCE(CAST(NEW.score AS CHAR), 'NULL'),
+                               '/', NEW.max_score),
+                        NOW());
+            END
+        ''')
+        _execute(db, '''
+            CREATE TRIGGER trg_grades_audit
+            AFTER UPDATE ON grades
+            FOR EACH ROW
+            BEGIN
+                DECLARE v_user_name VARCHAR(255);
+                SELECT name INTO v_user_name FROM users WHERE id = NEW.updated_by;
+                INSERT INTO audit_log (user_id, user_name, action, details, created_at)
+                VALUES (NEW.updated_by, COALESCE(v_user_name, 'system'), 'GRADE_UPDATE',
+                        CONCAT('student ', NEW.student_id, ', course ', NEW.course_id,
+                               ', component ', NEW.component,
+                               ': score ', COALESCE(CAST(OLD.score AS CHAR), 'NULL'),
+                               ' -> ', COALESCE(CAST(NEW.score AS CHAR), 'NULL'),
+                               ' (max ', NEW.max_score, ')'),
+                        NOW());
+            END
+        ''')
+        print("[DB] Grade audit triggers installed")
+    except Exception as e:
+        if '1419' in str(e):
+            print("[DB] Grade audit triggers NOT installed (error 1419). Run as root once:\n"
+                  "     SET GLOBAL log_bin_trust_function_creators = 1;\n"
+                  "     then restart the app, or run dbms/002_dbms_features.sql as root.")
+        else:
+            print(f"[DB] Grade audit trigger apply skipped: {e}")
+
+    # Feature 3: start_session stored procedure (transaction + atomic rollback).
+    # Same 1419 prerequisite as triggers; kept in its own try-block so a failure
+    # here never blocks the view/triggers. The app falls back to inline inserts
+    # when the procedure is absent (see routes_new.course_start_attendance).
+    try:
+        _execute(db, "DROP PROCEDURE IF EXISTS start_session")
+        _execute(db, '''
+            CREATE PROCEDURE start_session (
+                IN  p_course_id  INT,
+                IN  p_teacher_id INT,
+                IN  p_class_id   INT,
+                IN  p_batch_id   INT,
+                IN  p_description TEXT,
+                OUT out_session_id INT
+            )
+            BEGIN
+                DECLARE EXIT HANDLER FOR SQLEXCEPTION
+                BEGIN
+                    ROLLBACK;
+                    RESIGNAL;
+                END;
+
+                START TRANSACTION;
+
+                INSERT INTO attendance_sessions
+                    (course_id, teacher_id, class_id, batch_id, description, started_at)
+                VALUES (p_course_id, p_teacher_id, p_class_id, p_batch_id, p_description, NOW());
+
+                SET out_session_id = LAST_INSERT_ID();
+
+                INSERT IGNORE INTO session_attendance (session_id, student_id, student_name, status)
+                SELECT out_session_id, s.id, s.name, '--'
+                FROM course_students cs
+                JOIN students s ON s.id = cs.student_id
+                WHERE cs.course_id = p_course_id;
+
+                COMMIT;
+            END
+        ''')
+        print("[DB] start_session procedure installed")
+    except Exception as e:
+        if '1419' in str(e):
+            print("[DB] start_session procedure NOT installed (error 1419). "
+                  "Enable log_bin_trust_function_creators as root to use it; "
+                  "the app falls back to inline inserts meanwhile.")
+        else:
+            print(f"[DB] start_session procedure apply skipped: {e}")
+
+    # Feature 5: CHECK constraint on grades (score within 0..max_score).
+    # Idempotent: MySQL has no ADD CONSTRAINT IF NOT EXISTS, so check first.
+    try:
+        exists = _fetchone(db, '''
+            SELECT COUNT(*) AS c FROM information_schema.table_constraints
+            WHERE table_schema = DATABASE() AND table_name = 'grades'
+              AND constraint_name = 'chk_grade_score' AND constraint_type = 'CHECK'
+        ''')
+        if not (exists and exists['c']):
+            _execute(db,
+                "ALTER TABLE grades ADD CONSTRAINT chk_grade_score "
+                "CHECK (score IS NULL OR (score >= 0 AND score <= max_score))")
+            print("[DB] CHECK constraint chk_grade_score added to grades")
+    except Exception as e:
+        print(f"[DB] grades CHECK constraint apply skipped: {e}")
 
 
 def _seed_permissions(db):
@@ -363,6 +526,59 @@ def ensure_student_account(db, student_id, name, email=None, password=None):
         (name, email, hash_password(raw_pw), 'student', student_id,
          datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
     return uid
+
+
+def grade_triggers_installed(db):
+    """True if the grade-audit triggers exist in the database.
+
+    Used so the application can fall back to logging grade changes itself when
+    the DB triggers could not be created (e.g. error 1419 on a non-SUPER user),
+    without double-logging when they ARE present.
+    """
+    try:
+        row = _fetchone(db, '''
+            SELECT COUNT(*) AS c FROM information_schema.triggers
+            WHERE trigger_schema = DATABASE()
+              AND trigger_name IN ('trg_grades_audit', 'trg_grades_audit_insert')
+        ''')
+        return bool(row and row['c'] and row['c'] >= 2)
+    except Exception:
+        return False
+
+
+def procedure_installed(db, name):
+    """True if a stored procedure with the given name exists in this database."""
+    try:
+        row = _fetchone(db, '''
+            SELECT COUNT(*) AS c FROM information_schema.routines
+            WHERE routine_schema = DATABASE()
+              AND routine_type = 'PROCEDURE' AND routine_name = %s
+        ''', (name,))
+        return bool(row and row['c'])
+    except Exception:
+        return False
+
+
+def get_setting(db, key, default=None):
+    """Read a value from the MySQL app_settings table (returns default if absent)."""
+    row = _fetchone(db, "SELECT value FROM app_settings WHERE `key`=%s", (key,))
+    return row['value'] if row else default
+
+
+def set_setting(db, key, value):
+    """Upsert a value into the MySQL app_settings table."""
+    _execute(db,
+        "INSERT INTO app_settings (`key`, value) VALUES (%s, %s) "
+        "ON DUPLICATE KEY UPDATE value=VALUES(value)",
+        (key, str(value)))
+
+
+def get_defaulter_threshold(db):
+    """Return the configured defaulter threshold as a float (default 75)."""
+    try:
+        return float(get_setting(db, 'defaulter_threshold', '75'))
+    except (TypeError, ValueError):
+        return 75.0
 
 
 def log_action(user, action, details=''):
